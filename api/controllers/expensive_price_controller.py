@@ -138,10 +138,38 @@ class ExpensivePriceController(BaseController):
                 self.handle_exception(
                     e, "Error retrieving expensive price summary")
 
-        @self.router.get("/expensive-prices/top")
+        @self.router.get(
+            "/expensive-prices/top",
+            tags=["Expensive Price Monitoring"],
+            summary="Get highest recorded electricity prices",
+            description="""
+            Retrieve the highest electricity prices ever recorded in the system.
+            
+            This endpoint returns the most extreme price events, perfect for
+            understanding market volatility and identifying price spikes.
+            
+            **Features:**
+            - Configurable result limit (default: 10, max: 100)
+            - Ordered by highest consumer price first
+            - Includes both wholesale and consumer pricing
+            - Timestamp information for historical context
+            
+            **Use Cases:**
+            - Market volatility analysis
+            - Extreme event identification
+            - Historical price research
+            - Risk assessment and planning
+            """,
+            response_description="List of highest electricity price records with full pricing details"
+        )
         async def get_top_expensive_prices(
             limit: Optional[int] = Query(
-                10, description="Number of top expensive prices to return (max 100)"),
+                10,
+                description="Number of top expensive prices to return",
+                example=10,
+                ge=1,
+                le=100
+            ),
             service: ExpensivePriceAnalysisService = Depends(
                 get_expensive_price_service)
         ):
@@ -152,10 +180,38 @@ class ExpensivePriceController(BaseController):
                 self.handle_exception(
                     e, "Error retrieving top expensive prices")
 
-        @self.router.get("/expensive-prices/trends")
+        @self.router.get(
+            "/expensive-prices/trends",
+            tags=["Expensive Price Monitoring"],
+            summary="Get expensive price trends and patterns",
+            description="""
+            Analyze trends and patterns in expensive electricity price occurrences.
+            
+            This endpoint provides insights into when expensive prices typically occur,
+            including peak hours, monthly patterns, and recent activity trends.
+            
+            **Trend Analysis Includes:**
+            - Peak hours for expensive price occurrences
+            - Recent monthly activity patterns  
+            - Seasonal trends and insights
+            - Average price levels during expensive periods
+            
+            **Use Cases:**
+            - Identify optimal energy usage times
+            - Predict expensive price periods
+            - Understand seasonal price patterns
+            - Energy cost optimization planning
+            """,
+            response_description="Trends analysis including peak hours, monthly patterns, and insights"
+        )
         async def get_expensive_price_trends(
             threshold: Optional[float] = Query(
-                1.500, description="Minimum consumer price threshold in €/kWh to consider expensive"),
+                15.0,
+                description="Minimum consumer price threshold in euro cents per kWh",
+                example=15.0,
+                ge=5.0,
+                le=100.0
+            ),
             service: ExpensivePriceAnalysisService = Depends(
                 get_expensive_price_service)
         ):
@@ -204,7 +260,31 @@ class ExpensivePriceController(BaseController):
                 self.handle_exception(
                     e, "Error retrieving expensive price trends")
 
-        @self.router.get("/expensive-prices/percentiles")
+        @self.router.get(
+            "/expensive-prices/percentiles",
+            tags=["Expensive Price Monitoring"],
+            summary="Get price percentiles and statistical thresholds",
+            description="""
+            Retrieve statistical price percentiles to help determine appropriate
+            thresholds for expensive price analysis and monitoring.
+            
+            This endpoint provides data-driven insights for setting custom
+            thresholds based on historical price distribution patterns.
+            
+            **Statistical Analysis:**
+            - Price percentiles (50th, 75th, 90th, 95th, 99th)
+            - Suggested threshold values for different sensitivity levels
+            - Distribution analysis for consumer pricing
+            - Historical price range insights
+            
+            **Use Cases:**
+            - Custom threshold determination
+            - Statistical price analysis
+            - Market distribution understanding
+            - Alerting system configuration
+            """,
+            response_description="Price percentiles and suggested threshold values for analysis"
+        )
         async def get_price_percentiles(
             service: ExpensivePriceAnalysisService = Depends(
                 get_expensive_price_service)

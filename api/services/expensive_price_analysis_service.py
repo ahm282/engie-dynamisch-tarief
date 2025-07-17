@@ -48,7 +48,8 @@ class ExpensivePriceAnalysisService(BaseService):
                         float(stats_row['avg_expensive_price']), 3),
                     first_expensive_date=stats_row['first_expensive_date'],
                     last_expensive_date=stats_row['last_expensive_date'],
-                    threshold_eur=round(float(stats_row['threshold_eur']), 3)
+                    threshold_cents=round(
+                        float(stats_row['threshold_cents']), 3)
                 )
 
             hourly_stats = []
@@ -105,7 +106,7 @@ class ExpensivePriceAnalysisService(BaseService):
                     "percentage_of_total": round((overall.total_expensive / self._get_total_records()) * 100, 3),
                     "highest_price_ever": round(overall.highest_price, 3),
                     "average_expensive_price": round(overall.avg_expensive_price, 3),
-                    "threshold_used": round(overall.threshold_eur, 3)
+                    "threshold_used": round(overall.threshold_cents, 3)
                 },
                 "peak_expensive_hour": {
                     "hour": peak_hour.hour,
