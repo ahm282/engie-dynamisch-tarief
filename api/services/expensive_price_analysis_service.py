@@ -170,12 +170,46 @@ class ExpensivePriceAnalysisService(BaseService):
                 if isinstance(value, (int, float)):
                     percentiles[key] = round(float(value), 3)
 
+            # Separate wholesale and consumer price data
+            wholesale_data = {
+                "min_price": percentiles.get('min_price', 0),
+                "max_price": percentiles.get('max_price', 0),
+                "avg_price": percentiles.get('avg_price', 0),
+                "p75": percentiles.get('wholesale_p75', 0),
+                "p90": percentiles.get('wholesale_p90', 0),
+                "p95": percentiles.get('wholesale_p95', 0)
+            }
+
+            consumer_data = {
+                "min_price": percentiles.get('min_consumer_price', 0),
+                "max_price": percentiles.get('max_consumer_price', 0),
+                "avg_price": percentiles.get('avg_consumer_price', 0),
+                "p75": percentiles.get('consumer_p75', 0),
+                "p90": percentiles.get('consumer_p90', 0),
+                "p95": percentiles.get('consumer_p95', 0)
+            }
+
             return {
-                "price_distribution": percentiles,
-                "suggested_thresholds": {
-                    "moderate_expensive": round(percentiles.get('p75', 0.200), 3),
-                    "high_expensive": round(percentiles.get('p90', 0.300), 3),
-                    "extreme_expensive": round(percentiles.get('p95', 0.400), 3)
+                "wholesale_prices": {
+                    "unit": "EUR/MWh",
+                    "description": "Day-ahead market prices from Belpex",
+                    "distribution": wholesale_data,
+                    "suggested_thresholds": {
+                        "moderate_expensive": round(wholesale_data.get('p75', 200), 3),
+                        "high_expensive": round(wholesale_data.get('p90', 300), 3),
+                        "extreme_expensive": round(wholesale_data.get('p95', 400), 3)
+                    }
+                },
+                "consumer_prices": {
+                    "unit": "c€/kWh",
+                    "description": "Consumer prices including all taxes and fees",
+                    "distribution": consumer_data,
+                    "suggested_thresholds": {
+                        "cheap": 7.5,
+                        "regular": 13.0,
+                        "expensive": 20.0,
+                        "extremely_expensive": round(consumer_data.get('p95', 25), 1)
+                    }
                 }
             }
 

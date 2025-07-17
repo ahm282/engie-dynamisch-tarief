@@ -59,7 +59,7 @@ class ElectricityPriceRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 WHERE 1=1
             """
@@ -108,7 +108,7 @@ class ElectricityPriceRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 WHERE 1=1
             """
@@ -210,14 +210,14 @@ class ElectricityPriceRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             highest_query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 ORDER BY price_eur DESC
                 LIMIT ?
             """
 
             lowest_query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 ORDER BY price_eur ASC
                 LIMIT ?
@@ -290,7 +290,7 @@ class ElectricityPriceRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 ORDER BY timestamp DESC
                 LIMIT ?

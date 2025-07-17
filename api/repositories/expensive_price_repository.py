@@ -169,15 +169,20 @@ class ExpensivePriceRepository(BaseRepository):
         """Get price percentiles to help determine expensive thresholds."""
         conn = self.db_manager.get_connection()
         try:
-            query = """
+            # Basic statistics for both price types
+            basic_query = """
                 SELECT 
                     MIN(price_eur) as min_price,
                     MAX(price_eur) as max_price,
-                    AVG(price_eur) as avg_price
+                    AVG(price_eur) as avg_price,
+                    MIN(consumer_price_cents_kwh) as min_consumer_price,
+                    MAX(consumer_price_cents_kwh) as max_consumer_price,
+                    AVG(consumer_price_cents_kwh) as avg_consumer_price
                 FROM electricity_prices
             """
 
-            percentile_query = """
+            # Percentiles for wholesale prices (EUR/MWh)
+            wholesale_percentile_query = """
                 WITH ordered_prices AS (
                     SELECT price_eur,
                            ROW_NUMBER() OVER (ORDER BY price_eur) as row_num,
@@ -185,29 +190,65 @@ class ExpensivePriceRepository(BaseRepository):
                     FROM electricity_prices
                 )
                 SELECT 
-                    'p75' as percentile,
+                    'wholesale_p75' as percentile,
                     price_eur as value
                 FROM ordered_prices 
                 WHERE row_num = CAST(total_count * 0.75 AS INTEGER)
                 UNION ALL
                 SELECT 
-                    'p90' as percentile,
+                    'wholesale_p90' as percentile,
                     price_eur as value
                 FROM ordered_prices 
                 WHERE row_num = CAST(total_count * 0.90 AS INTEGER)
                 UNION ALL
                 SELECT 
-                    'p95' as percentile,
+                    'wholesale_p95' as percentile,
                     price_eur as value
                 FROM ordered_prices 
                 WHERE row_num = CAST(total_count * 0.95 AS INTEGER)
             """
 
-            basic_df = pd.read_sql_query(query, conn)
-            percentile_df = pd.read_sql_query(percentile_query, conn)
+            # Percentiles for consumer prices (c€/kWh)
+            consumer_percentile_query = """
+                WITH ordered_consumer_prices AS (
+                    SELECT consumer_price_cents_kwh,
+                           ROW_NUMBER() OVER (ORDER BY consumer_price_cents_kwh) as row_num,
+                           COUNT(*) OVER () as total_count
+                    FROM electricity_prices
+                )
+                SELECT 
+                    'consumer_p75' as percentile,
+                    consumer_price_cents_kwh as value
+                FROM ordered_consumer_prices 
+                WHERE row_num = CAST(total_count * 0.75 AS INTEGER)
+                UNION ALL
+                SELECT 
+                    'consumer_p90' as percentile,
+                    consumer_price_cents_kwh as value
+                FROM ordered_consumer_prices 
+                WHERE row_num = CAST(total_count * 0.90 AS INTEGER)
+                UNION ALL
+                SELECT 
+                    'consumer_p95' as percentile,
+                    consumer_price_cents_kwh as value
+                FROM ordered_consumer_prices 
+                WHERE row_num = CAST(total_count * 0.95 AS INTEGER)
+            """
+
+            basic_df = pd.read_sql_query(basic_query, conn)
+            wholesale_percentile_df = pd.read_sql_query(
+                wholesale_percentile_query, conn)
+            consumer_percentile_df = pd.read_sql_query(
+                consumer_percentile_query, conn)
 
             result = basic_df.iloc[0].to_dict()
-            for _, row in percentile_df.iterrows():
+
+            # Add wholesale percentiles
+            for _, row in wholesale_percentile_df.iterrows():
+                result[row['percentile']] = row['value']
+
+            # Add consumer percentiles
+            for _, row in consumer_percentile_df.iterrows():
                 result[row['percentile']] = row['value']
 
             return result

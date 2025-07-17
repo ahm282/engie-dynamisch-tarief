@@ -11,8 +11,10 @@ class PriceRecord(BaseModel):
     timestamp: str
     date: str
     hour: int
-    price_eur: float
+    price_eur: float  # wholesale price in EUR/MWh
     price_raw: str
+    consumer_price_cents_kwh: float = None  # consumer price in euro cents per kWh
+    price_category: str = None  # "cheap", "regular", "expensive", "extremely_expensive"
 
 
 class ExtremePrice(BaseModel):

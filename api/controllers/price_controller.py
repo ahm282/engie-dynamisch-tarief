@@ -134,26 +134,33 @@ class PriceController(BaseController):
         @self.router.get(
             "/current-prices",
             tags=["Price Data"],
-            summary="Get current/recent electricity prices",
+            summary="Get current/recent electricity prices with categorization",
             description="""
-            Retrieve the most recent electricity price data for real-time monitoring.
+            Retrieve the most recent electricity price data with smart categorization for real-time monitoring.
             
-            This endpoint provides quick access to current market conditions and recent
-            price trends. Ideal for dashboards, alerts, and real-time applications.
+            This endpoint provides quick access to current market conditions with automatic price categorization
+            to help users understand whether current prices are cheap, regular, expensive, or extremely expensive.
             
-            **Features:**
+            **Price Categories:**
+            - **Cheap**: < 7.5 c€/kWh (below average, great for energy usage)
+            - **Regular**: 7.5 - 13.0 c€/kWh (normal pricing, around average)
+            - **Expensive**: 13.0 - 20.0 c€/kWh (above average, consider reducing usage)
+            - **Extremely Expensive**: > 20.0 c€/kWh (very high, avoid high energy usage)
+            
+            **Enhanced Features:**
             - Configurable lookback period (default: 24 hours)
+            - Consumer price impact in euro cents per kWh
+            - Automatic price categorization for each hour
+            - Category distribution summary
             - Always returns the most recent data first
-            - Optimized for real-time applications
-            - Includes both wholesale and consumer prices
             
             **Use Cases:**
             - Real-time price monitoring dashboards
-            - Current market condition alerts
-            - Live price widgets
-            - Mobile app current price displays
+            - Smart home energy management decisions
+            - Cost-conscious energy usage planning
+            - Mobile app price alerts and recommendations
             """,
-            response_description="List of recent electricity price records ordered by timestamp"
+            response_description="Recent electricity prices with consumer impact and smart categorization"
         )
         async def get_current_prices(
             hours: int = Query(

@@ -268,27 +268,34 @@ class ExpensivePriceController(BaseController):
         @self.router.get(
             "/expensive-prices/percentiles",
             tags=["Expensive Price Monitoring"],
-            summary="Get price percentiles and statistical thresholds",
+            summary="Get comprehensive price percentiles and statistical thresholds",
             description="""
-            Retrieve statistical price percentiles to help determine appropriate
-            thresholds for expensive price analysis and monitoring.
+            Retrieve detailed statistical price percentiles for both wholesale and consumer prices
+            to help determine appropriate thresholds for expensive price analysis and monitoring.
             
-            This endpoint provides data-driven insights for setting custom
-            thresholds based on historical price distribution patterns.
+            This endpoint provides comprehensive data-driven insights for setting custom
+            thresholds based on historical price distribution patterns for different price types.
             
-            **Statistical Analysis:**
-            - Price percentiles (50th, 75th, 90th, 95th, 99th)
-            - Suggested threshold values for different sensitivity levels
-            - Distribution analysis for consumer pricing
-            - Historical price range insights
+            **Wholesale Prices (EUR/MWh):**
+            - Day-ahead market prices from Belpex
+            - Statistical percentiles (75th, 90th, 95th)
+            - Suggested thresholds for moderate, high, and extreme expensive levels
+            - Historical price range and distribution analysis
+            
+            **Consumer Prices (c€/kWh):**
+            - End-user prices including all taxes and fees
+            - Statistical percentiles (75th, 90th, 95th)
+            - Smart categorization thresholds (cheap, regular, expensive, extremely expensive)
+            - Real-world price ranges for decision making
             
             **Use Cases:**
-            - Custom threshold determination
-            - Statistical price analysis
-            - Market distribution understanding
-            - Alerting system configuration
+            - Custom threshold determination for both price types
+            - Statistical price analysis and market understanding
+            - Consumer decision support system configuration
+            - Alerting and notification system setup
+            - Energy usage optimization planning
             """,
-            response_description="Price percentiles and suggested threshold values for analysis"
+            response_description="Comprehensive price percentiles and suggested threshold values for both wholesale and consumer price analysis"
         )
         async def get_price_percentiles(
             service: ExpensivePriceAnalysisService = Depends(
