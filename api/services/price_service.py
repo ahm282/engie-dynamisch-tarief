@@ -4,10 +4,13 @@ Service for electricity price data operations.
 
 from typing import List, Optional
 from fastapi import HTTPException
+import random
+import numpy as np
+from datetime import datetime, timedelta
 
 from .base_service import BaseService
 from ..repositories import PriceDataRepository
-from ..models import PriceRecord
+from ..models import PriceRecord, ConsumptionCostAnalysis, HourlyConsumption
 
 
 class PriceService(BaseService):
@@ -248,3 +251,221 @@ class PriceService(BaseService):
             raise
         except Exception as e:
             self.handle_exception(e, "Error retrieving all price data")
+
+    def calculate_consumption_cost(
+        self,
+        total_consumption_kwh: float,
+        days_back: int = 30
+    ) -> ConsumptionCostAnalysis:
+        """
+        Calculate electricity costs based on consumption with realistic distribution patterns.
+
+        This method distributes the total consumption across the specified time period
+        using realistic consumption patterns that simulate real-life usage:
+        - Higher consumption during morning (7-9h) and evening (18-22h) peaks
+        - Lower consumption during night hours (0-6h)
+        - Weekend vs weekday variations
+        - Random variations to simulate real usage patterns
+
+        Args:
+            total_consumption_kwh: Total electricity consumption in kWh
+            days_back: Number of days to analyze (default: 30, max: 365)
+
+        Returns:
+            ConsumptionCostAnalysis: Detailed cost analysis with hourly breakdown
+        """
+        try:
+            # Validate input
+            if total_consumption_kwh <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Total consumption must be greater than 0 kWh"
+                )
+
+            if days_back < 1 or days_back > 365:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Days back must be between 1 and 365"
+                )
+
+            # Get price data for the specified period
+            df = self.repository.find_current_prices(hours=days_back * 24)
+
+            if df.empty:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No price data available for the specified period"
+                )
+
+            # Ensure we have the required columns
+            required_columns = ['timestamp', 'date', 'hour',
+                                'price_eur', 'price_raw', 'consumer_price_cents_kwh']
+            missing_columns = [
+                col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Missing required columns in data: {missing_columns}"
+                )
+
+            # Create realistic consumption distribution
+            consumption_distribution = self._generate_realistic_consumption_pattern(
+                len(df), total_consumption_kwh)
+
+            # Calculate costs for each hour
+            hourly_breakdown = []
+            total_cost = 0.0
+            cost_by_category = {"cheap": 0.0, "regular": 0.0,
+                                "expensive": 0.0, "extremely_expensive": 0.0}
+            consumption_by_category = {
+                "cheap": 0.0, "regular": 0.0, "expensive": 0.0, "extremely_expensive": 0.0}
+
+            for i, (_, row) in enumerate(df.iterrows()):
+                consumption_kwh = consumption_distribution[i]
+                price_cents_kwh = float(row['consumer_price_cents_kwh'])
+                cost_euros = (consumption_kwh * price_cents_kwh) / \
+                    100  # Convert cents to euros
+                category = self.categorize_price(price_cents_kwh)
+
+                hourly_consumption = HourlyConsumption(
+                    timestamp=row['timestamp'],
+                    date=row['date'],
+                    hour=int(row['hour']),
+                    consumption_kwh=round(consumption_kwh, 3),
+                    price_cents_kwh=round(price_cents_kwh, 3),
+                    cost_euros=round(cost_euros, 4),
+                    price_category=category
+                )
+
+                hourly_breakdown.append(hourly_consumption)
+                total_cost += cost_euros
+                cost_by_category[category] += cost_euros
+                consumption_by_category[category] += consumption_kwh
+
+            # Calculate statistics
+            prices = [float(row['consumer_price_cents_kwh'])
+                      for _, row in df.iterrows()]
+            average_price = total_cost * 100 / \
+                total_consumption_kwh  # Convert back to cents/kWh
+
+            # Calculate savings analysis
+            cheapest_price = min(prices)
+            most_expensive_price = max(prices)
+            cost_at_cheapest = (total_consumption_kwh * cheapest_price) / 100
+            cost_at_most_expensive = (
+                total_consumption_kwh * most_expensive_price) / 100
+
+            savings_analysis = {
+                "potential_savings_vs_most_expensive": round(cost_at_most_expensive - total_cost, 2),
+                "extra_cost_vs_cheapest": round(total_cost - cost_at_cheapest, 2),
+                "cheapest_possible_cost": round(cost_at_cheapest, 2),
+                "most_expensive_possible_cost": round(cost_at_most_expensive, 2)
+            }
+
+            # Additional statistics
+            statistics = {
+                "min_hourly_price": round(min(prices), 3),
+                "max_hourly_price": round(max(prices), 3),
+                "price_volatility": round(np.std(prices), 3),
+                "median_price": round(np.median(prices), 3),
+                "cost_efficiency_score": round((cost_at_most_expensive - total_cost) / (cost_at_most_expensive - cost_at_cheapest) * 100, 1)
+            }
+
+            return ConsumptionCostAnalysis(
+                total_consumption_kwh=round(total_consumption_kwh, 3),
+                total_cost_euros=round(total_cost, 2),
+                average_price_cents_kwh=round(average_price, 3),
+                days_analyzed=days_back,
+                period_start=df.iloc[-1]['timestamp'],  # Oldest record
+                period_end=df.iloc[0]['timestamp'],     # Newest record
+                hourly_breakdown=hourly_breakdown,
+                cost_by_category={k: round(v, 2)
+                                  for k, v in cost_by_category.items()},
+                consumption_by_category={
+                    k: round(v, 3) for k, v in consumption_by_category.items()},
+                savings_analysis=savings_analysis,
+                statistics=statistics
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.handle_exception(e, "Error calculating consumption costs")
+
+    def _generate_realistic_consumption_pattern(self, num_hours: int, total_consumption: float) -> List[float]:
+        """
+        Generate realistic electricity consumption pattern based on typical household usage.
+
+        This creates a realistic consumption distribution with:
+        - Morning peak (7-9h): Higher consumption
+        - Evening peak (18-22h): Highest consumption  
+        - Night valley (0-6h): Lower consumption
+        - Weekend variations: Different patterns on weekends
+        - Random variations: ±20% to simulate real-life unpredictability
+
+        Args:
+            num_hours: Number of hours to distribute consumption across
+            total_consumption: Total consumption to distribute
+
+        Returns:
+            List[float]: Hourly consumption values in kWh
+        """
+        # Define base consumption pattern by hour (0-23)
+        # Values represent relative consumption intensity
+        base_pattern = {
+            0: 0.3,   # Night - very low
+            1: 0.25,  # Night - very low
+            2: 0.2,   # Night - lowest
+            3: 0.2,   # Night - lowest
+            4: 0.25,  # Night - very low
+            5: 0.3,   # Early morning - low
+            6: 0.5,   # Morning start - medium
+            7: 0.8,   # Morning peak start - high
+            8: 1.0,   # Morning peak - very high
+            9: 0.7,   # Post morning - medium-high
+            10: 0.5,  # Mid morning - medium
+            11: 0.6,  # Late morning - medium
+            12: 0.7,  # Lunch - medium-high
+            13: 0.6,  # Afternoon - medium
+            14: 0.5,  # Afternoon - medium
+            15: 0.6,  # Late afternoon - medium
+            16: 0.7,  # Early evening - medium-high
+            17: 0.9,  # Evening start - high
+            18: 1.2,  # Evening peak start - very high
+            19: 1.3,  # Evening peak - highest
+            20: 1.2,  # Evening peak - very high
+            21: 1.0,  # Late evening - high
+            22: 0.8,  # Night transition - medium-high
+            23: 0.5   # Late night - medium
+        }
+
+        consumption_pattern = []
+
+        for hour_index in range(num_hours):
+            # Determine the hour of day and day of week
+            hour_of_day = hour_index % 24
+            day_index = hour_index // 24
+            is_weekend = (day_index % 7) in [5, 6]  # Saturday and Sunday
+
+            # Get base consumption for this hour
+            base_consumption = base_pattern[hour_of_day]
+
+            # Apply weekend modification (generally lower consumption during work hours)
+            if is_weekend:
+                if 9 <= hour_of_day <= 17:  # Work hours - less difference on weekends
+                    base_consumption *= 0.8
+                else:  # Non-work hours - similar or slightly higher on weekends
+                    base_consumption *= 1.1
+
+            # Add random variation (±20%)
+            variation = random.uniform(0.8, 1.2)
+            final_consumption = base_consumption * variation
+
+            consumption_pattern.append(final_consumption)
+
+        # Normalize to match total consumption
+        total_pattern = sum(consumption_pattern)
+        normalized_pattern = [(x / total_pattern) *
+                              total_consumption for x in consumption_pattern]
+
+        return normalized_pattern

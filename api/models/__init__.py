@@ -4,7 +4,7 @@ Imports all models for easy access.
 """
 
 # Price models
-from .price_models import PriceRecord, ExtremePrice
+from .price_models import PriceRecord, ExtremePrice, HourlyConsumption, ConsumptionCostAnalysis
 
 # Statistics models
 from .stats_models import DailyStats, HourlyStats, DatabaseStats
@@ -32,6 +32,8 @@ __all__ = [
     # Price models
     "PriceRecord",
     "ExtremePrice",
+    "HourlyConsumption",
+    "ConsumptionCostAnalysis",
 
     # Statistics models
     "DailyStats",
