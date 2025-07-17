@@ -74,25 +74,21 @@ class PriceController(BaseController):
         async def get_prices(
             start_date: Optional[str] = Query(
                 None,
-                description="Start date in YYYY-MM-DD format for filtering",
-                example="2024-01-01"
+                description="Start date in YYYY-MM-DD format for filtering"
             ),
             end_date: Optional[str] = Query(
                 None,
-                description="End date in YYYY-MM-DD format for filtering",
-                example="2024-12-31"
+                description="End date in YYYY-MM-DD format for filtering"
             ),
             days_back: Optional[int] = Query(
                 None,
                 description="Number of days back from today to retrieve data",
-                example=30,
                 ge=1,
                 le=365
             ),
             hour: Optional[int] = Query(
                 None,
                 description="Filter by specific hour of the day (0-23)",
-                example=18,
                 ge=0,
                 le=23
             ),
@@ -164,10 +160,20 @@ class PriceController(BaseController):
         )
         async def get_current_prices(
             hours: int = Query(
-                24, description="Number of recent hours to retrieve"),
+                24,
+                description="Number of recent hours to retrieve (1-168, default: 24)",
+                example=24,
+                ge=1,
+                le=168
+            ),
             service: PriceService = Depends(get_price_service)
         ):
-            """Get the most recent price data."""
+            """
+            Get the most recent electricity price data with smart categorization.
+
+            Returns recent electricity prices with automatic categorization (cheap, regular, expensive, extremely expensive)
+            and category distribution statistics for quick market condition assessment.
+            """
             try:
                 return service.get_current_prices(hours=hours)
             except HTTPException:
@@ -175,22 +181,70 @@ class PriceController(BaseController):
             except Exception as e:
                 self.handle_exception(e, "Error retrieving current prices")
 
-        @self.router.get("/all-prices")
+        @self.router.get(
+            "/all-prices",
+            response_model=List[PriceRecord],
+            tags=["Price Data"],
+            summary="Get all electricity price data without pagination limits",
+            description="""
+            Retrieve all electricity price data with optional filtering - no pagination limits applied.
+            
+            **⚠️ Warning:** This endpoint can return very large datasets (17,950+ records). 
+            Use filtering options to reduce response size and improve performance.
+            
+            **Filtering Options:**
+            - **Date Range**: Filter by start_date and end_date to limit time range
+            - **Recent Data**: Use days_back for recent historical data only
+            - **Hourly Filter**: Filter by specific hour of the day (0-23)
+            - **Ordering**: Control sort order by timestamp
+            
+            **Use Cases:**
+            - Full historical data exports
+            - Comprehensive analysis requiring complete datasets
+            - Data migration and backup operations
+            - Statistical analysis over entire price history
+            
+            **Performance Recommendations:**
+            - Always use date range filtering for better performance
+            - Consider using /prices endpoint with pagination for UI applications
+            - Use specific hour filtering when analyzing time-of-day patterns
+            """,
+            response_description="Complete list of electricity price records matching the specified filters"
+        )
         async def get_all_prices(
             start_date: Optional[str] = Query(
-                None, description="Start date (YYYY-MM-DD)"),
+                None,
+                description="Start date in YYYY-MM-DD format for filtering"
+            ),
             end_date: Optional[str] = Query(
-                None, description="End date (YYYY-MM-DD)"),
+                None,
+                description="End date in YYYY-MM-DD format for filtering"
+            ),
             days_back: Optional[int] = Query(
-                None, description="Number of days back from today"),
+                None,
+                description="Number of days back from today to retrieve data",
+                ge=1,
+                le=365
+            ),
             hour: Optional[int] = Query(
-                None, description="Filter by specific hour (0-23)"),
+                None,
+                description="Filter by specific hour of the day (0-23)",
+                ge=0,
+                le=23
+            ),
             order: Optional[str] = Query(
-                "desc", description="Order by timestamp (asc/desc)"),
+                "desc",
+                description="Order by timestamp: 'asc' for oldest first, 'desc' for newest first",
+                regex="^(asc|desc)$"
+            ),
             service: PriceService = Depends(get_price_service)
         ):
-            """Get all electricity price data with filters - no limit applied. 
-            Warning: This can return very large datasets (17,950+ records)."""
+            """
+            Get all electricity price data with optional filtering - no pagination limits.
+
+            Returns complete electricity price datasets filtered by the specified criteria.
+            Warning: This can return very large datasets, use filtering to improve performance.
+            """
             try:
                 return service.get_all_prices(
                     start_date=start_date,
