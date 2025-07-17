@@ -6,7 +6,7 @@ Handles aggregations and statistical calculations.
 import pandas as pd
 
 from .base_repository import BaseRepository
-from ..database import db_manager
+from ..config import db_manager
 
 
 class StatisticsRepository(BaseRepository):

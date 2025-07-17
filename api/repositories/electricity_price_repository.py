@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from .base_repository import BaseRepository
-from ..database import db_manager
+from ..config import db_manager
 
 
 class ElectricityPriceRepository(BaseRepository):

@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Dict, Optional, Any
 
 from .base_repository import BaseRepository
-from ..database import db_manager
+from ..config import db_manager
 
 
 class ExtremePriceRepository(BaseRepository):

@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Optional, Any
 
 from .base_repository import BaseRepository
-from ..database import db_manager
+from ..config import db_manager
 
 
 class PriceDataRepository(BaseRepository):
@@ -58,7 +58,7 @@ class PriceDataRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 WHERE 1=1
             """
@@ -107,7 +107,7 @@ class PriceDataRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 WHERE 1=1
             """
@@ -142,7 +142,7 @@ class PriceDataRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
                 ORDER BY timestamp DESC
                 LIMIT ?

@@ -27,8 +27,8 @@ class ExpensivePriceAnalysisService(BaseService):
             )
         return True
 
-    def get_expensive_price_analysis(self, threshold: float = 0.200) -> Dict[str, Any]:
-        """Get comprehensive analysis of expensive price occurrences."""
+    def get_expensive_price_analysis(self, threshold: float = 1.500) -> Dict[str, Any]:
+        """Get comprehensive analysis of expensive consumer price occurrences."""
         try:
             self.validate_input(threshold=threshold)
 
@@ -79,8 +79,8 @@ class ExpensivePriceAnalysisService(BaseService):
             self.handle_exception(
                 e, "Error retrieving expensive price analysis")
 
-    def get_expensive_price_summary(self, threshold: float = 0.200) -> Dict[str, Any]:
-        """Get a summary of expensive price occurrences."""
+    def get_expensive_price_summary(self, threshold: float = 1.500) -> Dict[str, Any]:
+        """Get a summary of expensive consumer price occurrences."""
         try:
             self.validate_input(threshold=threshold)
 

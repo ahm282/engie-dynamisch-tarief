@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Dict, Optional, Any
 
 from .base_repository import BaseRepository
-from ..database import db_manager
+from ..config import db_manager
 
 
 class ExpensivePriceRepository(BaseRepository):
@@ -16,14 +16,14 @@ class ExpensivePriceRepository(BaseRepository):
     def __init__(self):
         self.db_manager = db_manager
 
-    def find_all(self, threshold: float = 0.200) -> pd.DataFrame:
-        """Find all expensive price records above threshold."""
+    def find_all(self, threshold: float = 15.0) -> pd.DataFrame:
+        """Find all expensive consumer price records above threshold (in c€/kWh)."""
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
-                WHERE price_eur > ?
+                WHERE consumer_price_cents_kwh > ?
                 ORDER BY timestamp DESC
             """
             df = pd.read_sql_query(query, conn, params=[threshold])
@@ -31,46 +31,46 @@ class ExpensivePriceRepository(BaseRepository):
         finally:
             conn.close()
 
-    def find_by_id(self, record_id: Any, threshold: float = 0.200) -> Optional[pd.Series]:
-        """Find expensive price record by timestamp."""
+    def find_by_id(self, record_id: Any, threshold: float = 15.0) -> Optional[pd.Series]:
+        """Find expensive consumer price record by timestamp."""
         conn = self.db_manager.get_connection()
         try:
             query = """
                 SELECT * FROM electricity_prices 
-                WHERE timestamp = ? AND price_eur > ?
+                WHERE timestamp = ? AND consumer_price_cents_kwh > ?
             """
             df = pd.read_sql_query(query, conn, params=[record_id, threshold])
             return df.iloc[0] if not df.empty else None
         finally:
             conn.close()
 
-    def count(self, threshold: float = 0.200) -> int:
-        """Count expensive price records."""
+    def count(self, threshold: float = 15.0) -> int:
+        """Count expensive consumer price records."""
         conn = self.db_manager.get_connection()
         try:
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM electricity_prices WHERE price_eur > ?",
+                "SELECT COUNT(*) FROM electricity_prices WHERE consumer_price_cents_kwh > ?",
                 [threshold]
             )
             return cursor.fetchone()[0]
         finally:
             conn.close()
 
-    def find_expensive_price_stats(self, threshold: float = 0.200) -> Dict[str, pd.DataFrame]:
-        """Find expensive price analysis data."""
+    def find_expensive_price_stats(self, threshold: float = 15.0) -> Dict[str, pd.DataFrame]:
+        """Find expensive consumer price analysis data."""
         conn = self.db_manager.get_connection()
         try:
             # Overall stats
             stats_query = """
                 SELECT 
                     COUNT(*) as total_expensive,
-                    MAX(price_eur) as highest_price,
-                    AVG(price_eur) as avg_expensive_price,
+                    MAX(consumer_price_cents_kwh) as highest_price,
+                    AVG(consumer_price_cents_kwh) as avg_expensive_price,
                     MIN(date) as first_expensive_date,
                     MAX(date) as last_expensive_date,
-                    ? as threshold_eur
+                    ? as threshold_cents
                 FROM electricity_prices
-                WHERE price_eur > ?
+                WHERE consumer_price_cents_kwh > ?
             """
 
             # By hour
@@ -78,9 +78,9 @@ class ExpensivePriceRepository(BaseRepository):
                 SELECT 
                     hour,
                     COUNT(*) as expensive_count,
-                    AVG(price_eur) as avg_expensive_price
+                    AVG(consumer_price_cents_kwh) as avg_expensive_price
                 FROM electricity_prices
-                WHERE price_eur > ?
+                WHERE consumer_price_cents_kwh > ?
                 GROUP BY hour
                 ORDER BY expensive_count DESC
             """
@@ -90,9 +90,9 @@ class ExpensivePriceRepository(BaseRepository):
                 SELECT 
                     strftime('%Y-%m', date) as month,
                     COUNT(*) as expensive_count,
-                    AVG(price_eur) as avg_expensive_price
+                    AVG(consumer_price_cents_kwh) as avg_expensive_price
                 FROM electricity_prices
-                WHERE price_eur > ?
+                WHERE consumer_price_cents_kwh > ?
                 GROUP BY month
                 ORDER BY month DESC
             """
@@ -112,15 +112,15 @@ class ExpensivePriceRepository(BaseRepository):
         finally:
             conn.close()
 
-    def find_expensive_prices_by_hour(self, hour: int, threshold: float = 0.200) -> pd.DataFrame:
-        """Find expensive prices for a specific hour."""
+    def find_expensive_prices_by_hour(self, hour: int, threshold: float = 15.0) -> pd.DataFrame:
+        """Find expensive consumer prices for a specific hour."""
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
-                WHERE price_eur > ? AND hour = ?
-                ORDER BY price_eur DESC
+                WHERE consumer_price_cents_kwh > ? AND hour = ?
+                ORDER BY consumer_price_cents_kwh DESC
             """
 
             df = pd.read_sql_query(query, conn, params=[threshold, hour])
@@ -129,15 +129,15 @@ class ExpensivePriceRepository(BaseRepository):
             conn.close()
 
     def find_expensive_prices_by_date_range(
-        self, start_date: str, end_date: str, threshold: float = 0.200
+        self, start_date: str, end_date: str, threshold: float = 1.500
     ) -> pd.DataFrame:
-        """Find expensive prices within a date range."""
+        """Find expensive consumer prices within a date range."""
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
-                WHERE price_eur > ? 
+                WHERE consumer_price_cents_kwh > ? 
                 AND date >= ? 
                 AND date <= ?
                 ORDER BY timestamp DESC
@@ -150,13 +150,13 @@ class ExpensivePriceRepository(BaseRepository):
             conn.close()
 
     def find_top_expensive_prices(self, limit: int = 10) -> pd.DataFrame:
-        """Find the most expensive price records."""
+        """Find the most expensive consumer price records."""
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
-                ORDER BY price_eur DESC
+                ORDER BY consumer_price_cents_kwh DESC
                 LIMIT ?
             """
 

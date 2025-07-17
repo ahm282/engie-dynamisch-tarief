@@ -18,11 +18,11 @@ class DatabaseConfig(BaseModel):
 class APIConfig(BaseModel):
     """API configuration settings."""
 
-    title: str = "Electricity Price API"
-    description: str = "REST API for electricity price data analysis with MVC architecture"
+    title: str = "Engie Dynamic Electricity Price API"
+    description: str = "REST API for tracking and analyzing Engie Belgium's dynamic electricity prices with detailed analytics"
     version: str = "2.0.0"
     host: str = "0.0.0.0"
-    port: int = 8001
+    port: int = 8000
     debug: bool = False
     reload: bool = False
 

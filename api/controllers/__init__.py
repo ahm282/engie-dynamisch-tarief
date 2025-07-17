@@ -53,14 +53,37 @@ class ElectricityPriceController:
         self._setup_aggregate_routes()
 
     def _setup_aggregate_routes(self):
-        """Setup aggregate routes by including all controller routers."""
-        # Include all individual controller routes
-        self.router.include_router(self.info_controller.router)
-        self.router.include_router(self.price_controller.router)
-        self.router.include_router(self.statistics_controller.router)
-        self.router.include_router(self.extreme_controller.router)
-        self.router.include_router(self.negative_price_controller.router)
-        self.router.include_router(self.expensive_price_controller.router)
+        """
+        Setup aggregate routes with proper FastAPI tags and organization.
+
+        Includes all individual controller routers with specific tags for
+        better Swagger documentation organization and API discoverability.
+        """
+        # Include all individual controller routes with specific tags
+        self.router.include_router(
+            self.info_controller.router,
+            tags=["System Information"]
+        )
+        self.router.include_router(
+            self.price_controller.router,
+            tags=["Price Data"]
+        )
+        self.router.include_router(
+            self.statistics_controller.router,
+            tags=["Statistics & Analytics"]
+        )
+        self.router.include_router(
+            self.extreme_controller.router,
+            tags=["Extreme Market Analysis"]
+        )
+        self.router.include_router(
+            self.negative_price_controller.router,
+            tags=["Negative Price Analysis"]
+        )
+        self.router.include_router(
+            self.expensive_price_controller.router,
+            tags=["Expensive Price Monitoring"]
+        )
 
 
 # Create controller instances

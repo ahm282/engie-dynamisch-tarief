@@ -1,5 +1,28 @@
 """
 Controller for expensive price analysis endpoints.
+
+This controller provides comprehensive analysis of expensive electricity prices
+including consumer cost impact, trend analysis, and market monitoring capabilities.
+
+Tags:
+    - expensive-prices
+    - consumer-analysis
+    - cost-monitoring
+    - price-alerts
+    - market-trends
+
+Features:
+    - Consumer price impact analysis (c€/kWh)
+    - Statistical threshold determination
+    - Temporal trend analysis
+    - Top expensive price identification
+    - Market anomaly detection
+
+Endpoints:
+    - GET /expensive-prices: Comprehensive expensive price analysis
+    - GET /expensive-prices/summary: Summary statistics and insights
+    - GET /expensive-prices/top: Highest recorded prices
+    - GET /expensive-prices/trends: Historical trend analysis
 """
 
 from fastapi import HTTPException, Depends, Query
@@ -22,28 +45,93 @@ class ExpensivePriceController(BaseController):
     def _setup_routes(self):
         """Setup routes for expensive price analysis operations."""
 
-        @self.router.get("/expensive-prices")
+        @self.router.get(
+            "/expensive-prices",
+            tags=["Expensive Price Monitoring"],
+            summary="Get comprehensive expensive price analysis",
+            description="""
+            Comprehensive analysis of expensive electricity prices with consumer impact.
+            
+            This endpoint provides detailed analysis of expensive price occurrences including:
+            - Statistical summary and trends
+            - Hourly and monthly distribution patterns
+            - Consumer cost impact analysis in euro cents per kWh
+            - Historical expensive price frequency
+            
+            **Threshold Configuration:**
+            - Default: 15.0 c€/kWh (statistically determined as expensive)
+            - Customizable threshold for different analysis needs
+            - Based on consumer price formula: (0.10175 * wholesale) + 2.1316
+            
+            **Analysis Components:**
+            - Overall statistics with total counts and averages
+            - Hourly distribution showing peak expensive periods
+            - Monthly trends revealing seasonal patterns
+            - Price percentiles and threshold analysis
+            
+            **Use Cases:**
+            - Consumer cost monitoring and alerts
+            - Market analysis and reporting
+            - Energy cost budgeting and planning
+            - Historical trend identification
+            """,
+            response_description="Comprehensive expensive price analysis including statistics, trends, and distributions"
+        )
         async def get_expensive_price_analysis(
             threshold: Optional[float] = Query(
-                0.200, description="Minimum price per kWh threshold in EUR to consider expensive"),
+                15.0,
+                description="Minimum consumer price threshold in euro cents per kWh to consider expensive",
+                example=15.0,
+                ge=5.0,
+                le=100.0
+            ),
             service: ExpensivePriceAnalysisService = Depends(
                 get_expensive_price_service)
         ):
-            """Get comprehensive analysis of expensive price occurrences."""
+            """Get comprehensive analysis of expensive consumer price occurrences."""
             try:
                 return service.get_expensive_price_analysis(threshold)
             except Exception as e:
                 self.handle_exception(
                     e, "Error retrieving expensive price analysis")
 
-        @self.router.get("/expensive-prices/summary")
+        @self.router.get(
+            "/expensive-prices/summary",
+            tags=["Expensive Price Monitoring"],
+            summary="Get expensive price summary statistics",
+            description="""
+            Get a concise summary of expensive consumer price occurrences.
+            
+            This endpoint provides key statistics about expensive price periods
+            in a simplified format perfect for dashboards and quick analysis.
+            
+            **Summary Includes:**
+            - Total count of expensive price occurrences
+            - Average expensive price level
+            - Highest recorded expensive price
+            - Date range of expensive price activity
+            - Current threshold being applied
+            
+            **Performance Benefits:**
+            - Faster response than full analysis
+            - Reduced data payload
+            - Ideal for real-time monitoring
+            - Perfect for summary widgets
+            """,
+            response_description="Summary statistics of expensive price occurrences"
+        )
         async def get_expensive_price_summary(
             threshold: Optional[float] = Query(
-                0.200, description="Minimum price threshold in EUR to consider expensive"),
+                15.0,
+                description="Minimum consumer price threshold in euro cents per kWh",
+                example=15.0,
+                ge=5.0,
+                le=100.0
+            ),
             service: ExpensivePriceAnalysisService = Depends(
                 get_expensive_price_service)
         ):
-            """Get a summary of expensive price occurrences."""
+            """Get a summary of expensive consumer price occurrences."""
             try:
                 return service.get_expensive_price_summary(threshold)
             except Exception as e:
@@ -67,11 +155,11 @@ class ExpensivePriceController(BaseController):
         @self.router.get("/expensive-prices/trends")
         async def get_expensive_price_trends(
             threshold: Optional[float] = Query(
-                0.200, description="Minimum price threshold in EUR to consider expensive"),
+                1.500, description="Minimum consumer price threshold in €/kWh to consider expensive"),
             service: ExpensivePriceAnalysisService = Depends(
                 get_expensive_price_service)
         ):
-            """Get trends and insights about expensive prices."""
+            """Get trends and insights about expensive consumer prices."""
             try:
                 analysis = service.get_expensive_price_analysis(threshold)
 

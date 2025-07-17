@@ -67,8 +67,8 @@ class ElectricityPriceService:
         """Get comprehensive analysis of negative price occurrences."""
         return self.negative_price_service.get_negative_price_analysis()
 
-    def get_expensive_price_analysis(self, threshold=0.200):
-        """Get comprehensive analysis of expensive price occurrences."""
+    def get_expensive_price_analysis(self, threshold=1.500):
+        """Get comprehensive analysis of expensive consumer price occurrences."""
         return self.expensive_price_service.get_expensive_price_analysis(threshold=threshold)
 
     def get_current_prices(self, hours=24):
