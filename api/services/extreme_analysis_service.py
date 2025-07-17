@@ -48,6 +48,8 @@ class ExtremeAnalysisService(BaseService):
                     hour=int(row['hour']),
                     price_eur=round(float(row['price_eur']), 3),
                     price_raw=row['price_raw'],
+                    consumer_price_cents_kwh=round(
+                        float(row['consumer_price_cents_kwh']), 3),
                     price_type="highest"
                 ))
 
@@ -59,6 +61,8 @@ class ExtremeAnalysisService(BaseService):
                     hour=int(row['hour']),
                     price_eur=round(float(row['price_eur']), 3),
                     price_raw=row['price_raw'],
+                    consumer_price_cents_kwh=round(
+                        float(row['consumer_price_cents_kwh']), 3),
                     price_type="lowest"
                 ))
 

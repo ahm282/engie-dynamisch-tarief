@@ -250,7 +250,12 @@ class ExpensivePriceController(BaseController):
                     ],
                     "threshold_used": threshold,
                     "insights": {
-                        "most_expensive_hour": peak_hours[0].hour if peak_hours else None,
+                        "most_expensive_hour": {
+                            "hour": peak_hours[0].hour,
+                            "avg_consumer_price_cents": round(peak_hours[0].avg_expensive_price, 1),
+                            "occurrence_count": peak_hours[0].expensive_count,
+                            "description": f"Hour {peak_hours[0].hour}:00 is typically the most expensive with {round(peak_hours[0].avg_expensive_price, 1)} c€/kWh"
+                        } if peak_hours else None,
                         "recent_expensive_activity": len(recent_months) > 0,
                         "avg_expensive_price": analysis.get('overall_stats').avg_expensive_price if analysis.get('overall_stats') else None
                     }

@@ -41,16 +41,16 @@ class ExtremePriceRepository(BaseRepository):
         conn = self.db_manager.get_connection()
         try:
             highest_query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
-                ORDER BY price_eur DESC
+                ORDER BY consumer_price_cents_kwh DESC
                 LIMIT ?
             """
 
             lowest_query = """
-                SELECT timestamp, date, hour, price_eur, price_raw
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
                 FROM electricity_prices
-                ORDER BY price_eur ASC
+                ORDER BY consumer_price_cents_kwh ASC
                 LIMIT ?
             """
 

@@ -20,6 +20,7 @@ class ExtremePrice(BaseModel):
     timestamp: str
     date: str
     hour: int
-    price_eur: float
+    price_eur: float  # wholesale price in EUR/MWh
     price_raw: str
+    consumer_price_cents_kwh: float  # consumer price in euro cents per kWh
     price_type: str  # "highest" or "lowest"

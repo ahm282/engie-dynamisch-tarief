@@ -6,12 +6,12 @@ from fastapi import Query, HTTPException, Depends
 
 from .base_controller import BaseController
 from ..services import ExtremeAnalysisService
-from ..repositories import ElectricityPriceRepository
+from ..repositories import ExtremePriceRepository
 
 
 def get_extreme_analysis_service() -> ExtremeAnalysisService:
     """Dependency injection for ExtremeAnalysisService."""
-    repository = ElectricityPriceRepository()
+    repository = ExtremePriceRepository()
     return ExtremeAnalysisService(repository)
 
 

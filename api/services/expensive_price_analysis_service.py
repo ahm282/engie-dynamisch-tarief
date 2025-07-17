@@ -111,7 +111,8 @@ class ExpensivePriceAnalysisService(BaseService):
                 "peak_expensive_hour": {
                     "hour": peak_hour.hour,
                     "count": peak_hour.expensive_count,
-                    "avg_price": round(peak_hour.avg_expensive_price, 3)
+                    "avg_price": round(peak_hour.avg_expensive_price, 3),
+                    "description": f"Hour {peak_hour.hour}:00 has the most expensive price occurrences ({peak_hour.expensive_count} times) with avg {round(peak_hour.avg_expensive_price, 1)} c€/kWh"
                 } if peak_hour else None,
                 "recent_month": {
                     "month": recent_month.month,
@@ -142,14 +143,18 @@ class ExpensivePriceAnalysisService(BaseService):
                     "date": row['date'],
                     "hour": int(row['hour']),
                     "price_eur": round(float(row['price_eur']), 3),
-                    "price_raw": row['price_raw']
+                    "consumer_price_cents_kwh": round(float(row['consumer_price_cents_kwh']), 3),
+                    "price_raw": row['price_raw'],
+                    "description": f"{row['date']} at {int(row['hour'])}:00 - {round(float(row['consumer_price_cents_kwh']), 1)} c€/kWh"
                 })
 
             return {
                 "top_expensive_prices": records,
                 "count": len(records),
-                "highest_price": round(float(df['price_eur'].max()), 3),
-                "avg_of_top_prices": round(float(df['price_eur'].mean()), 3)
+                "highest_wholesale_price": round(float(df['price_eur'].max()), 3),
+                "highest_consumer_price": round(float(df['consumer_price_cents_kwh'].max()), 3),
+                "avg_wholesale_price": round(float(df['price_eur'].mean()), 3),
+                "avg_consumer_price": round(float(df['consumer_price_cents_kwh'].mean()), 3)
             }
 
         except Exception as e:

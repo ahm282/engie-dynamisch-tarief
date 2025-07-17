@@ -99,7 +99,8 @@ class NegativePriceAnalysisService(BaseService):
                 "peak_negative_hour": {
                     "hour": peak_hour.hour,
                     "count": peak_hour.negative_count,
-                    "avg_price": round(peak_hour.avg_negative_price, 3)
+                    "avg_price": round(peak_hour.avg_negative_price, 3),
+                    "description": f"Hour {peak_hour.hour}:00 has the most negative price occurrences ({peak_hour.negative_count} times) with avg {round(peak_hour.avg_negative_price, 1)} €/MWh"
                 } if peak_hour else None,
                 "recent_month": {
                     "month": recent_month.month,
