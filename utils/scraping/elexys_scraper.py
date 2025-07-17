@@ -15,11 +15,8 @@ import sys
 import os
 
 # Add the project root to the path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-# Add the project root to the path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
 
 
 class ElexysElectricityScraper:
@@ -53,7 +50,8 @@ class ElexysElectricityScraper:
             self.db_path = db_path
         else:
             self.db_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                os.path.dirname(os.path.dirname(
+                    os.path.dirname(os.path.abspath(__file__)))),
                 'api', 'db', 'electricity_prices.db'
             )
 

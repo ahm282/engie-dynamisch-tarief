@@ -34,16 +34,16 @@ python utils/scrape_prices.py --check-only
 python utils/scrape_prices.py --verbose
 
 # Quiet mode (only errors)
-python utils/scrape_prices.py --quiet
+python -m utils.scraping.scrape_prices --quiet
 
 # Use custom database file
-python utils/scrape_prices.py --db-path custom.db
+python -m utils.scraping.scrape_prices --db-path custom.db
 ```
 
 ### Programmatic Usage
 
 ```python
-from utils.elexys_scraper import ElexysElectricityScraper
+from utils.scraping import ElexysElectricityScraper
 
 # Create scraper instance
 scraper = ElexysElectricityScraper()
@@ -198,7 +198,7 @@ python "E:\Python\Huishouden\Elektriciteit\utils\scrape_prices.py" --quiet
 
 ```bash
 # Run every hour
-0 * * * * /usr/bin/python3 /path/to/project/utils/scrape_prices.py --quiet
+0 * * * * /usr/bin/python3 /path/to/project -m utils.scraping.scrape_prices --quiet
 ```
 
 ### Python Scheduler
@@ -206,7 +206,7 @@ python "E:\Python\Huishouden\Elektriciteit\utils\scrape_prices.py" --quiet
 ```python
 import schedule
 import time
-from utils.elexys_scraper import ElexysElectricityScraper
+from utils.scraping import ElexysElectricityScraper
 
 def scrape_job():
     scraper = ElexysElectricityScraper()
