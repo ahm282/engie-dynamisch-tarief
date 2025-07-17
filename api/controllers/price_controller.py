@@ -130,11 +130,11 @@ class PriceController(BaseController):
         @self.router.get(
             "/current-prices",
             tags=["Price Data"],
-            summary="Get current/recent electricity prices with categorization",
+            summary="Get today's electricity prices with categorization",
             description="""
-            Retrieve the most recent electricity price data with smart categorization for real-time monitoring.
+            Retrieve today's electricity price data with smart categorization for real-time monitoring.
             
-            This endpoint provides quick access to current market conditions with automatic price categorization
+            This endpoint provides access to current day's market conditions with automatic price categorization
             to help users understand whether current prices are cheap, regular, expensive, or extremely expensive.
             
             **Price Categories:**
@@ -143,43 +143,89 @@ class PriceController(BaseController):
             - **Expensive**: 13.0 - 20.0 c€/kWh (above average, consider reducing usage)
             - **Extremely Expensive**: > 20.0 c€/kWh (very high, avoid high energy usage)
             
-            **Enhanced Features:**
-            - Configurable lookback period (default: 24 hours)
+            **Features:**
+            - Returns all 24 hours for today's date
             - Consumer price impact in euro cents per kWh
             - Automatic price categorization for each hour
             - Category distribution summary
-            - Always returns the most recent data first
+            - Data ordered by hour (0-23)
             
             **Use Cases:**
             - Real-time price monitoring dashboards
             - Smart home energy management decisions
-            - Cost-conscious energy usage planning
+            - Cost-conscious energy usage planning for today
             - Mobile app price alerts and recommendations
             """,
-            response_description="Recent electricity prices with consumer impact and smart categorization"
+            response_description="Today's electricity prices with consumer impact and smart categorization"
         )
         async def get_current_prices(
-            hours: int = Query(
-                24,
-                description="Number of recent hours to retrieve (1-168, default: 24)",
-                example=24,
-                ge=1,
-                le=168
-            ),
             service: PriceService = Depends(get_price_service)
         ):
             """
-            Get the most recent electricity price data with smart categorization.
+            Get today's electricity price data with smart categorization.
 
-            Returns recent electricity prices with automatic categorization (cheap, regular, expensive, extremely expensive)
+            Returns today's electricity prices with automatic categorization (cheap, regular, expensive, extremely expensive)
             and category distribution statistics for quick market condition assessment.
             """
             try:
-                return service.get_current_prices(hours=hours)
+                return service.get_today_prices()
             except HTTPException:
                 raise
             except Exception as e:
                 self.handle_exception(e, "Error retrieving current prices")
+
+        @self.router.get(
+            "/next-day-prices",
+            tags=["Price Data"],
+            summary="Get next day's (tomorrow's) electricity prices with categorization",
+            description="""
+            Retrieve tomorrow's electricity price data with smart categorization for planning ahead.
+            
+            This endpoint provides access to next day's market prices to help users plan their energy consumption
+            and understand upcoming market conditions with automatic price categorization.
+            
+            **Price Categories:**
+            - **Cheap**: < 7.5 c€/kWh (below average, great for energy usage)
+            - **Regular**: 7.5 - 13.0 c€/kWh (normal pricing, around average)
+            - **Expensive**: 13.0 - 20.0 c€/kWh (above average, consider reducing usage)
+            - **Extremely Expensive**: > 20.0 c€/kWh (very high, avoid high energy usage)
+            
+            **Features:**
+            - Returns all 24 hours for tomorrow's date (if available)
+            - Consumer price impact in euro cents per kWh
+            - Automatic price categorization for each hour
+            - Category distribution summary
+            - Data ordered by hour (0-23)
+            - Availability status and informative messages
+            
+            **Data Availability:**
+            - Next day prices are typically published by energy markets around 12:00-14:00 CET
+            - If data is not yet available, the endpoint returns an empty result with availability status
+            - Check the `available` field in the response to determine data availability
+            
+            **Use Cases:**
+            - Energy usage planning for tomorrow
+            - Smart home scheduling and automation
+            - Cost optimization for the next day
+            - Energy-intensive task planning (dishwasher, washing machine, EV charging)
+            """,
+            response_description="Tomorrow's electricity prices with consumer impact and smart categorization (if available)"
+        )
+        async def get_next_day_prices(
+            service: PriceService = Depends(get_price_service)
+        ):
+            """
+            Get tomorrow's electricity price data with smart categorization.
+
+            Returns tomorrow's electricity prices with automatic categorization and availability status.
+            If data is not yet available, returns appropriate status information.
+            """
+            try:
+                return service.get_next_day_prices()
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.handle_exception(e, "Error retrieving next day prices")
 
         @self.router.get(
             "/all-prices",

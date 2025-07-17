@@ -193,6 +193,133 @@ class PriceService(BaseService):
         except Exception as e:
             self.handle_exception(e, "Error retrieving current prices")
 
+    def get_today_prices(self) -> dict:
+        """Get today's electricity prices with categorization."""
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            df = self.repository.find_by_date(today)
+
+            # Check if DataFrame is empty or missing required columns
+            if df.empty:
+                return {
+                    "today_prices": [],
+                    "count": 0,
+                    "category_distribution": {},
+                    "date": today
+                }
+
+            # Verify required columns exist
+            required_columns = ['timestamp', 'date', 'hour',
+                                'price_eur', 'price_raw', 'consumer_price_cents_kwh']
+            missing_columns = [
+                col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Missing required columns in data: {missing_columns}"
+                )
+
+            # Convert to Pydantic models with categorization
+            records = []
+            for _, row in df.iterrows():
+                consumer_price = float(row['consumer_price_cents_kwh'])
+                category = self.categorize_price(consumer_price)
+
+                records.append(PriceRecord(
+                    timestamp=row['timestamp'],
+                    date=row['date'],
+                    hour=int(row['hour']),
+                    price_eur=round(float(row['price_eur']), 3),
+                    price_raw=row['price_raw'],
+                    consumer_price_cents_kwh=round(consumer_price, 3),
+                    price_category=category
+                ))
+
+            # Calculate category distribution
+            category_counts = {}
+            for record in records:
+                category = record.price_category
+                category_counts[category] = category_counts.get(
+                    category, 0) + 1
+
+            return {
+                "today_prices": records,
+                "count": len(records),
+                "category_distribution": category_counts,
+                "date": today
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.handle_exception(e, "Error retrieving today's prices")
+
+    def get_next_day_prices(self) -> dict:
+        """Get next day's (tomorrow's) electricity prices with categorization."""
+        try:
+            tomorrow = (datetime.now() + timedelta(days=1)
+                        ).strftime('%Y-%m-%d')
+            df = self.repository.find_by_date(tomorrow)
+
+            # Check if DataFrame is empty or missing required columns
+            if df.empty:
+                return {
+                    "next_day_prices": [],
+                    "count": 0,
+                    "category_distribution": {},
+                    "date": tomorrow,
+                    "available": False,
+                    "message": f"Price data for {tomorrow} is not yet available"
+                }
+
+            # Verify required columns exist
+            required_columns = ['timestamp', 'date', 'hour',
+                                'price_eur', 'price_raw', 'consumer_price_cents_kwh']
+            missing_columns = [
+                col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Missing required columns in data: {missing_columns}"
+                )
+
+            # Convert to Pydantic models with categorization
+            records = []
+            for _, row in df.iterrows():
+                consumer_price = float(row['consumer_price_cents_kwh'])
+                category = self.categorize_price(consumer_price)
+
+                records.append(PriceRecord(
+                    timestamp=row['timestamp'],
+                    date=row['date'],
+                    hour=int(row['hour']),
+                    price_eur=round(float(row['price_eur']), 3),
+                    price_raw=row['price_raw'],
+                    consumer_price_cents_kwh=round(consumer_price, 3),
+                    price_category=category
+                ))
+
+            # Calculate category distribution
+            category_counts = {}
+            for record in records:
+                category = record.price_category
+                category_counts[category] = category_counts.get(
+                    category, 0) + 1
+
+            return {
+                "next_day_prices": records,
+                "count": len(records),
+                "category_distribution": category_counts,
+                "date": tomorrow,
+                "available": True,
+                "message": f"Price data for {tomorrow} is available"
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.handle_exception(e, "Error retrieving next day's prices")
+
     def get_all_prices(
         self,
         start_date: Optional[str] = None,

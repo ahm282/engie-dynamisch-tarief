@@ -300,3 +300,19 @@ class ElectricityPriceRepository(BaseRepository):
             return df
         finally:
             conn.close()
+
+    def find_by_date(self, date: str) -> pd.DataFrame:
+        """Find all price data for a specific date."""
+        conn = self.db_manager.get_connection()
+        try:
+            query = """
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
+                FROM electricity_prices
+                WHERE date = ?
+                ORDER BY hour ASC
+            """
+
+            df = pd.read_sql_query(query, conn, params=[date])
+            return df
+        finally:
+            conn.close()
