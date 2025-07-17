@@ -101,11 +101,20 @@ export DB_DATABASE_PATH=custom/path/to/database.db
 -   `GET /health` - Health check
 -   `GET /database-info` - Database statistics
 -   `GET /prices` - Price data with filters
+-   `GET /current-prices` - Today's price data with categorization
+-   `GET /next-day-prices` - Tomorrow's price data (if available)
+-   `GET /prices-by-date` - Price data for any specific date
+-   `GET /all-prices` - Complete price dataset export
+-   `GET /consumption-cost` - Consumption cost analysis
 -   `GET /daily-stats` - Daily statistics
 -   `GET /hourly-stats` - Hourly patterns
 -   `GET /extremes` - Highest/lowest prices
 -   `GET /negative-prices` - Negative price analysis
--   `GET /current-prices` - Recent price data
+-   `GET /expensive-prices` - Expensive price monitoring
+-   `GET /expensive-prices/summary` - Expensive price summary
+-   `GET /expensive-prices/top` - Top expensive prices
+-   `GET /expensive-prices/trends` - Expensive price trends
+-   `GET /expensive-prices/percentiles` - Price percentiles analysis
 
 ## Benefits of This Architecture
 

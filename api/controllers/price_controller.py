@@ -228,6 +228,74 @@ class PriceController(BaseController):
                 self.handle_exception(e, "Error retrieving next day prices")
 
         @self.router.get(
+            "/prices-by-date",
+            tags=["Price Data"],
+            summary="Get electricity prices for a specific date with comprehensive analysis",
+            description="""
+            Retrieve electricity price data for any specific date with detailed analysis and categorization.
+            
+            This endpoint provides comprehensive price data for a specified date, including statistical analysis,
+            price categorization, and market insights for historical or future dates.
+            
+            **Price Categories:**
+            - **Cheap**: < 7.5 c€/kWh (below average, great for energy usage)
+            - **Regular**: 7.5 - 13.0 c€/kWh (normal pricing, around average)
+            - **Expensive**: 13.0 - 20.0 c€/kWh (above average, consider reducing usage)
+            - **Extremely Expensive**: > 20.0 c€/kWh (very high, avoid high energy usage)
+            
+            **Features:**
+            - Returns all 24 hours for the specified date (if available)
+            - Consumer price impact in euro cents per kWh
+            - Automatic price categorization for each hour
+            - Category distribution summary
+            - Statistical analysis (min, max, average prices)
+            - Data ordered by hour (0-23)
+            - Availability status and informative messages
+            
+            **Date Format:**
+            - Use YYYY-MM-DD format (e.g., "2025-07-15")
+            - Supports historical dates and future dates (if data available)
+            - Invalid formats return HTTP 400 error
+            
+            **Statistical Analysis:**
+            - Average, minimum, and maximum consumer prices
+            - Average, minimum, and maximum wholesale prices
+            - Price category distribution counts
+            - Data availability confirmation
+            
+            **Use Cases:**
+            - Historical price analysis and research
+            - Specific date energy cost calculation
+            - Market condition analysis for past events
+            - Future date planning (if data available)
+            - Comparative analysis between different dates
+            """,
+            response_description="Electricity prices for the specified date with comprehensive analysis and statistics"
+        )
+        async def get_prices_by_date(
+            date: str = Query(
+                ...,
+                description="Date in YYYY-MM-DD format (e.g., '2025-07-15')",
+                example="2025-07-15",
+                regex=r"^\d{4}-\d{2}-\d{2}$"
+            ),
+            service: PriceService = Depends(get_price_service)
+        ):
+            """
+            Get electricity price data for a specific date with comprehensive analysis.
+
+            Returns electricity prices for the specified date with automatic categorization,
+            statistical analysis, and availability status.
+            """
+            try:
+                return service.get_prices_by_date(date)
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.handle_exception(
+                    e, f"Error retrieving prices for date {date}")
+
+        @self.router.get(
             "/all-prices",
             response_model=List[PriceRecord],
             tags=["Price Data"],

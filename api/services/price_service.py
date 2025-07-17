@@ -320,6 +320,93 @@ class PriceService(BaseService):
         except Exception as e:
             self.handle_exception(e, "Error retrieving next day's prices")
 
+    def get_prices_by_date(self, date: str) -> dict:
+        """Get electricity prices for a specific date with categorization."""
+        try:
+            # Validate date format
+            try:
+                datetime.strptime(date, '%Y-%m-%d')
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid date format. Use YYYY-MM-DD format."
+                )
+
+            df = self.repository.find_by_date(date)
+
+            # Check if DataFrame is empty or missing required columns
+            if df.empty:
+                return {
+                    "date_prices": [],
+                    "count": 0,
+                    "category_distribution": {},
+                    "date": date,
+                    "available": False,
+                    "message": f"No price data available for {date}"
+                }
+
+            # Verify required columns exist
+            required_columns = ['timestamp', 'date', 'hour',
+                                'price_eur', 'price_raw', 'consumer_price_cents_kwh']
+            missing_columns = [
+                col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Missing required columns in data: {missing_columns}"
+                )
+
+            # Convert to Pydantic models with categorization
+            records = []
+            for _, row in df.iterrows():
+                consumer_price = float(row['consumer_price_cents_kwh'])
+                category = self.categorize_price(consumer_price)
+
+                records.append(PriceRecord(
+                    timestamp=row['timestamp'],
+                    date=row['date'],
+                    hour=int(row['hour']),
+                    price_eur=round(float(row['price_eur']), 3),
+                    price_raw=row['price_raw'],
+                    consumer_price_cents_kwh=round(consumer_price, 3),
+                    price_category=category
+                ))
+
+            # Calculate category distribution
+            category_counts = {}
+            for record in records:
+                category = record.price_category
+                category_counts[category] = category_counts.get(
+                    category, 0) + 1
+
+            # Calculate statistics
+            consumer_prices = [
+                record.consumer_price_cents_kwh for record in records]
+            wholesale_prices = [record.price_eur for record in records]
+
+            return {
+                "date_prices": records,
+                "count": len(records),
+                "category_distribution": category_counts,
+                "date": date,
+                "available": True,
+                "message": f"Price data for {date} is available",
+                "statistics": {
+                    "consumer_price_avg": round(sum(consumer_prices) / len(consumer_prices), 3) if consumer_prices else 0,
+                    "consumer_price_min": round(min(consumer_prices), 3) if consumer_prices else 0,
+                    "consumer_price_max": round(max(consumer_prices), 3) if consumer_prices else 0,
+                    "wholesale_price_avg": round(sum(wholesale_prices) / len(wholesale_prices), 3) if wholesale_prices else 0,
+                    "wholesale_price_min": round(min(wholesale_prices), 3) if wholesale_prices else 0,
+                    "wholesale_price_max": round(max(wholesale_prices), 3) if wholesale_prices else 0
+                }
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.handle_exception(
+                e, f"Error retrieving prices for date {date}")
+
     def get_all_prices(
         self,
         start_date: Optional[str] = None,
