@@ -61,7 +61,7 @@ class ExpensivePriceController(BaseController):
             **Threshold Configuration:**
             - Default: 15.0 c€/kWh (statistically determined as expensive)
             - Customizable threshold for different analysis needs
-            - Based on consumer price formula: (0.10175 * wholesale) + 2.1316
+            - Based on consumer price formula: 1.3163 + (0.1019 × wholesale)
             
             **Analysis Components:**
             - Overall statistics with total counts and averages

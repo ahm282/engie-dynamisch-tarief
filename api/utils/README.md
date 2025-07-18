@@ -78,7 +78,7 @@ The scraper targets the Elexys Spot Belpex page:
 ### 3. Price Calculations
 
 -   **Wholesale Price**: Direct from website (EUR/MWh)
--   **Consumer Price**: Calculated with 25% markup + 3.5 c€/kWh network costs
+-   **Consumer Price**: Calculated using formula: 1.3163 + (0.1019 × wholesale)
 -   **Price Categories**: Automatically categorized (cheap, regular, expensive, extremely expensive)
 
 ### 4. Duplicate Prevention
@@ -104,7 +104,7 @@ date: "2025-07-18"
 hour: 23
 price_eur: 113.87
 price_raw: "€ 113,87"
-consumer_price_cents_kwh: 17.887
+consumer_price_cents_kwh: 12.9213
 ```
 
 ## Configuration
@@ -113,8 +113,9 @@ consumer_price_cents_kwh: 17.887
 
 ```python
 # Network configuration
-consumer_markup_percentage = 25.0  # 25% markup
-network_costs = 3.5  # Additional costs in cents/kWh
+consumer_price_formula = "1.3163 + (0.1019 × wholesale)"  # Correct formula
+base_cost = 1.3163  # Base cost in cents/kWh
+variable_rate = 0.1019  # Rate per EUR/MWh
 
 # HTTP headers for web requests
 headers = {

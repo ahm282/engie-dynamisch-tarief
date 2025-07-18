@@ -110,7 +110,31 @@ class ProphetForecastService:
 
     @cache_forecast(ttl_seconds=3600)
     def forecast(self, hours_ahead: int = 48) -> list:
+        """
+        Generate forecasts starting from the last available data point in the database.
+
+        Args:
+            hours_ahead: Number of hours to predict into the future
+
+        Returns:
+            List of forecast dictionaries with predictions
+        """
+        # Get data and ensure we know the last timestamp
         df = self._prepare_data(self.repository.get_all_data())
+
+        if df.empty:
+            raise ValueError("No data available for forecasting")
+
+        # Get the last timestamp from the actual data
+        last_timestamp = df['ds'].max()
+        data_summary = self.repository.get_data_summary()
+
+        print(
+            f"📊 Forecasting from last available data point: {last_timestamp}")
+        print(
+            f"📈 Database contains {data_summary.get('total_records', 0)} records")
+        print(
+            f"📅 Data range: {data_summary.get('first_timestamp', 'N/A')} to {data_summary.get('latest_timestamp', 'N/A')}")
 
         # Use tuned params or defaults
         params = self.best_params or {'changepoint_prior_scale': 0.05,
@@ -129,6 +153,7 @@ class ProphetForecastService:
         model.add_seasonality(name='hourly', period=24, fourier_order=8)
         model.fit(df)
 
+        # Create future dataframe starting from the last data point
         future = model.make_future_dataframe(periods=hours_ahead, freq='h')
 
         # Add basic regressors
@@ -147,17 +172,39 @@ class ProphetForecastService:
         last_ma7 = df['price_ma7'].iloc[-1]
         last_volatility = df['price_volatility'].iloc[-1]
 
-        # Use mean of last 24 hours
-        future['price_lag1'] = last_price
-        future['price_lag24'] = last_price_24h
-        future['price_ma7'] = last_ma7
-        future['price_volatility'] = last_volatility
+        # For future periods, we need to handle the lagged features carefully
+        # For the training period, use actual values; for future, use approximations
+        training_length = len(df)
+
+        # Fill in historical values for regressors (for training period)
+        future.loc[:training_length-1, 'price_lag1'] = df['price_lag1'].values
+        future.loc[:training_length-1,
+                   'price_lag24'] = df['price_lag24'].values
+        future.loc[:training_length-1, 'price_ma7'] = df['price_ma7'].values
+        future.loc[:training_length-1,
+                   'price_volatility'] = df['price_volatility'].values
+
+        # For future periods, use estimates
+        future.loc[training_length:, 'price_lag1'] = last_price
+        future.loc[training_length:, 'price_lag24'] = last_price_24h
+        future.loc[training_length:, 'price_ma7'] = last_ma7
+        future.loc[training_length:, 'price_volatility'] = last_volatility
+
         future['demand_proxy'] = np.sin(
             2 * np.pi * future['hour'] / 24) + 0.5 * np.sin(2 * np.pi * future['day_of_week'] / 7)
 
         forecast = model.predict(future)
+
+        # Get only the future predictions (after the last training data point)
         results = forecast[['ds', 'yhat', 'yhat_lower',
                             'yhat_upper']].tail(hours_ahead).copy()
+
+        # Ensure we're truly getting predictions from after the last data point
+        future_mask = results['ds'] > last_timestamp
+        results = results[future_mask].copy()
+
+        print(
+            f"🔮 Generated {len(results)} predictions starting from {results['ds'].min() if not results.empty else 'N/A'}")
 
         # Enhanced post-processing
         for col in ['yhat', 'yhat_lower', 'yhat_upper']:

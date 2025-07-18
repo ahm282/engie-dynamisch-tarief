@@ -32,9 +32,12 @@ Version: 2.0.0
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+import logging
 
 from .controllers import electricity_controller
 from .config import app_config
+from .services.scraping_service import lifespan, add_scraping_endpoint
 
 
 def create_app() -> FastAPI:
@@ -63,13 +66,14 @@ def create_app() -> FastAPI:
         - /api/*: All electricity price analysis endpoints
     """
 
-    # Initialize FastAPI app with comprehensive configuration
+    # Initialize FastAPI app with comprehensive configuration and lifespan
     app = FastAPI(
         title=app_config.api.title,
         description=app_config.api.description,
         version=app_config.api.version,
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,  # Add lifespan for background tasks
         contact={
             "name": "Electricity Price Analysis API",
             "url": "https://github.com/ahm282/engie-dynamic-price-tracker-api",
@@ -81,7 +85,7 @@ def create_app() -> FastAPI:
         openapi_tags=[
             {
                 "name": "System Information",
-                "description": "API health, version info, and system status endpoints"
+                "description": "API health, version info, system status, and manual scraping endpoints"
             },
             {
                 "name": "Price Data",
@@ -102,7 +106,7 @@ def create_app() -> FastAPI:
             {
                 "name": "Extreme Market Analysis",
                 "description": "Market extremes, volatility analysis, and anomaly detection"
-            }, 
+            },
             {
                 "name": "Forecasting Trends",
                 "description": "Analysis of price trends, predictions, and forecasting accuracy for better consumer decision-making"
@@ -124,6 +128,9 @@ def create_app() -> FastAPI:
         electricity_controller.router,
         prefix="/api",
     )
+
+    # Add manual scraping endpoints
+    add_scraping_endpoint(app)
 
     return app
 

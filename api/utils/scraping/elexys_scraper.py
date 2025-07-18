@@ -221,8 +221,8 @@ class ElexysElectricityScraper:
         Returns:
             Consumer price in euro cents per kWh
         """
-        # Use the specified consumer price formula: (0.10175 * wholesale) + 2.1316
-        consumer_price = (0.10175 * wholesale_price) + 2.1316
+        # Use the corrected consumer price formula: 1.3163 + (0.1019 * wholesale)
+        consumer_price = 1.3163 + (0.1019 * wholesale_price)
 
         return round(consumer_price, 4)
 
