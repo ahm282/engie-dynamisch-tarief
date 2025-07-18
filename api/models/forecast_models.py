@@ -11,6 +11,8 @@ class ForecastPoint(BaseModel):
     predicted_price_cents_kwh: float
     lower_bound_cents_kwh: float
     upper_bound_cents_kwh: float
+    confidence: float
+    price_category: str
 
 
 class ForecastResponse(BaseModel):
