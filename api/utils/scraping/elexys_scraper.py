@@ -226,29 +226,78 @@ class ElexysElectricityScraper:
 
         return round(consumer_price, 4)
 
-    def check_existing_record(self, timestamp: datetime) -> bool:
+    def check_existing_record(self, timestamp: datetime) -> Optional[Dict[str, any]]:
         """
-        Check if a record already exists in the database.
+        Check if a record already exists in the database and return its data.
 
         Args:
             timestamp: The timestamp to check
 
         Returns:
-            True if record exists, False otherwise
+            Dictionary with existing record data or None if record doesn't exist
         """
         try:
             conn = self.db_manager.get_connection()
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM electricity_prices WHERE timestamp = ?",
+                "SELECT price_eur, price_raw, consumer_price_cents_kwh FROM electricity_prices WHERE timestamp = ?",
                 (timestamp.strftime("%Y-%m-%d %H:%M:%S"),)
             )
-            count = cursor.fetchone()[0]
+            result = cursor.fetchone()
             conn.close()
 
-            return count > 0
+            if result:
+                return {
+                    'price_eur': result[0],
+                    'price_raw': result[1],
+                    'consumer_price_cents_kwh': result[2]
+                }
+            return None
 
         except Exception as e:
             self.logger.error(f"Error checking existing record: {e}")
+            return None
+
+    def update_price_record(self, timestamp: datetime, date_str: str, hour: int,
+                            price_eur: float, price_raw: str, consumer_price: float) -> bool:
+        """
+        Update an existing price record in the database.
+
+        Args:
+            timestamp: Datetime object
+            date_str: Date string in YYYY-MM-DD format
+            hour: Hour of the day (0-23)
+            price_eur: Wholesale price in EUR/MWh
+            price_raw: Raw price string from website
+            consumer_price: Consumer price in cents/kWh
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            conn = self.db_manager.get_connection()
+
+            cursor = conn.execute("""
+                UPDATE electricity_prices 
+                SET date = ?, hour = ?, price_eur = ?, price_raw = ?, consumer_price_cents_kwh = ?
+                WHERE timestamp = ?
+            """, (
+                date_str,
+                hour,
+                price_eur,
+                price_raw,
+                consumer_price,
+                timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            ))
+
+            conn.commit()
+            conn.close()
+
+            self.logger.info(
+                f"Updated record: {timestamp} - {price_eur} EUR/MWh")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error updating record: {e}")
             return False
 
     def insert_price_record(self, timestamp: datetime, date_str: str, hour: int,
@@ -296,7 +345,7 @@ class ElexysElectricityScraper:
 
     def process_scraped_data(self, data_rows: List[Dict[str, str]]) -> Dict[str, int]:
         """
-        Process scraped data and insert into database.
+        Process scraped data and insert/update in database.
 
         Args:
             data_rows: List of scraped data dictionaries
@@ -309,7 +358,8 @@ class ElexysElectricityScraper:
             'processed': 0,
             'skipped_existing': 0,
             'skipped_errors': 0,
-            'inserted': 0
+            'inserted': 0,
+            'updated': 0
         }
 
         # Process rows in reverse order (oldest first)
@@ -324,13 +374,6 @@ class ElexysElectricityScraper:
 
             timestamp, date_str, hour = datetime_result
 
-            # Check if record already exists
-            if self.check_existing_record(timestamp):
-                self.logger.debug(
-                    f"Record already exists for {timestamp}, skipping")
-                stats['skipped_existing'] += 1
-                continue
-
             # Parse price
             price_eur = self.parse_price(row_data['price_raw'])
             if price_eur is None:
@@ -340,14 +383,43 @@ class ElexysElectricityScraper:
             # Calculate consumer price
             consumer_price = self.calculate_consumer_price(price_eur)
 
-            # Insert into database
-            if self.insert_price_record(
-                timestamp, date_str, hour, price_eur,
-                row_data['price_raw'], consumer_price
-            ):
-                stats['inserted'] += 1
+            # Check if record already exists
+            existing_record = self.check_existing_record(timestamp)
+
+            if existing_record:
+                # Compare prices to see if update is needed
+                price_diff = abs(existing_record['price_eur'] - price_eur)
+                consumer_price_diff = abs(
+                    existing_record['consumer_price_cents_kwh'] - consumer_price)
+
+                # Update if there's a significant difference (more than 0.01 EUR/MWh or 0.001 cents/kWh)
+                if price_diff > 0.01 or consumer_price_diff > 0.001 or existing_record['price_raw'] != row_data['price_raw']:
+                    self.logger.info(
+                        f"Price difference detected for {timestamp}: "
+                        f"DB={existing_record['price_eur']}, Website={price_eur}, "
+                        f"updating record"
+                    )
+
+                    if self.update_price_record(
+                        timestamp, date_str, hour, price_eur,
+                        row_data['price_raw'], consumer_price
+                    ):
+                        stats['updated'] += 1
+                    else:
+                        stats['skipped_errors'] += 1
+                else:
+                    self.logger.debug(
+                        f"Record already exists for {timestamp} with same price, skipping")
+                    stats['skipped_existing'] += 1
             else:
-                stats['skipped_errors'] += 1
+                # Insert new record
+                if self.insert_price_record(
+                    timestamp, date_str, hour, price_eur,
+                    row_data['price_raw'], consumer_price
+                ):
+                    stats['inserted'] += 1
+                else:
+                    stats['skipped_errors'] += 1
 
         return stats
 
@@ -417,6 +489,7 @@ class ElexysElectricityScraper:
         print(f"📊 Total rows found: {stats.get('total_rows', 0)}")
         print(f"🔄 Rows processed: {stats.get('processed', 0)}")
         print(f"✅ New records inserted: {stats.get('inserted', 0)}")
+        print(f"🔄 Records updated: {stats.get('updated', 0)}")
         print(
             f"⏭️  Existing records skipped: {stats.get('skipped_existing', 0)}")
         print(f"❌ Rows with errors: {stats.get('skipped_errors', 0)}")
@@ -424,10 +497,15 @@ class ElexysElectricityScraper:
         if stats.get('inserted', 0) > 0:
             print(
                 f"\n🎉 Successfully added {stats['inserted']} new price records!")
-        elif stats.get('skipped_existing', 0) > 0:
+
+        if stats.get('updated', 0) > 0:
+            print(
+                f"\n🔄 Successfully updated {stats['updated']} existing price records!")
+
+        if stats.get('inserted', 0) == 0 and stats.get('updated', 0) == 0 and stats.get('skipped_existing', 0) > 0:
             print(f"\n✨ Database is up to date - no new records needed")
-        else:
-            print(f"\n⚠️  No new records were added")
+        elif stats.get('inserted', 0) == 0 and stats.get('updated', 0) == 0:
+            print(f"\n⚠️  No new records were added or updated")
 
         print("="*50)
 
