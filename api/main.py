@@ -102,6 +102,10 @@ def create_app() -> FastAPI:
             {
                 "name": "Extreme Market Analysis",
                 "description": "Market extremes, volatility analysis, and anomaly detection"
+            }, 
+            {
+                "name": "Forecasting Trends",
+                "description": "Analysis of price trends, predictions, and forecasting accuracy for better consumer decision-making"
             }
         ]
     )

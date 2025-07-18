@@ -28,6 +28,9 @@ from .expensive_price_models import (
 # Response models
 from .response_models import CurrentPricesResponse, APIInfo, HealthResponse
 
+# Forecasting models
+from .forecast_models import ForecastResponse
+
 __all__ = [
     # Price models
     "PriceRecord",
@@ -55,5 +58,8 @@ __all__ = [
     # Response models
     "CurrentPricesResponse",
     "APIInfo",
-    "HealthResponse"
+    "HealthResponse",
+
+    # Forecasting models
+    "ForecastResponse"
 ]

@@ -15,6 +15,7 @@ from .statistics_controller import StatisticsController
 from .extreme_analysis_controller import ExtremeAnalysisController
 from .negative_price_controller import NegativePriceController
 from .expensive_price_controller import ExpensivePriceController
+from .forecast_controller import ForecastController
 
 # Legacy imports for backwards compatibility
 from ..services import ElectricityPriceService
@@ -48,6 +49,7 @@ class ElectricityPriceController:
         self.extreme_controller = ExtremeAnalysisController()
         self.negative_price_controller = NegativePriceController()
         self.expensive_price_controller = ExpensivePriceController()
+        self.forecast_controller = ForecastController()
 
         # Include all routers
         self._setup_aggregate_routes()
@@ -84,6 +86,10 @@ class ElectricityPriceController:
             self.expensive_price_controller.router,
             tags=["Expensive Price Monitoring"]
         )
+        self.router.include_router(
+            self.forecast_controller.router,
+            tags=["Forecasting Trends"]
+        )
 
 
 # Create controller instances
@@ -93,6 +99,7 @@ statistics_controller = StatisticsController()
 extreme_analysis_controller = ExtremeAnalysisController()
 negative_price_controller = NegativePriceController()
 expensive_price_controller = ExpensivePriceController()
+forecast_controller = ForecastController()
 
 # Create aggregate controller for backwards compatibility
 electricity_controller = ElectricityPriceController()
@@ -108,6 +115,7 @@ __all__ = [
     "ExtremeAnalysisController",
     "NegativePriceController",
     "ExpensivePriceController",
+    "ForecastController",
 
     # Controller instances
     "info_controller",
@@ -116,6 +124,7 @@ __all__ = [
     "extreme_analysis_controller",
     "negative_price_controller",
     "expensive_price_controller",
+    "forecast_controller",
 
     # Aggregate controller
     "ElectricityPriceController",
