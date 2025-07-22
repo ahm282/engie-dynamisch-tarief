@@ -1,0 +1,50 @@
+{
+    "data_quality": {
+        "enable_validation": true,
+        "min_data_points": 100,
+        "max_missing_percentage": 0.1,
+        "outlier_threshold": 3.0,
+        "quality_threshold": 0.7,
+        "auto_fix_issues": true
+    },
+    "performance": {
+        "enable_caching": true,
+        "enable_parallel_training": true,
+        "cache_expiry_minutes": 30,
+        "max_workers": 4,
+        "model_timeout_seconds": 60
+    },
+    "model_settings": {
+        "default_forecast_hours": 48,
+        "enable_ml_models": true,
+        "enable_xgboost": true,
+        "enable_lightgbm": true,
+        "ensemble_weights": {
+            "prophet": 0.4,
+            "xgboost": 0.35,
+            "lightgbm": 0.25
+        },
+        "prophet_params": {
+            "seasonality_mode": "multiplicative",
+            "growth": "linear",
+            "interval_width": 0.8,
+            "changepoint_prior_scale": 0.05,
+            "seasonality_prior_scale": 10.0
+        }
+    },
+    "features": {
+        "include_weather_interactions": true,
+        "include_solar_features": true,
+        "include_price_lags": true,
+        "feature_selection_enabled": true,
+        "max_features": 20,
+        "rolling_windows": [3, 6, 12, 24]
+    },
+    "monitoring": {
+        "track_performance": true,
+        "log_predictions": true,
+        "alert_on_errors": true,
+        "log_level": "INFO",
+        "log_directory": "logs"
+    }
+}

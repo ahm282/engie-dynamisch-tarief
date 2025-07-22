@@ -2,7 +2,13 @@ import pandas as pd
 import numpy as np
 from prophet import Prophet
 import json
+import time
+import logging
+import hashlib
 from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps, lru_cache
 from prophet.diagnostics import cross_validation, performance_metrics
 from ..repositories.prophet_repository import ProphetRepository
 from ..utils.cache_utils import cache_forecast
@@ -24,15 +30,215 @@ except ImportError:
 
 
 class ProphetForecastService:
-    def __init__(self, repository: ProphetRepository = None):
+    def __init__(self, repository: ProphetRepository = None, enable_enhancements=True):
         self.repository = repository or ProphetRepository()
         self.weather_collector = WeatherCollector()
         self.best_params = None
+
+        # Load enhanced configuration
+        self.enable_enhancements = enable_enhancements
+        self.config = self._load_enhanced_config() if enable_enhancements else {}
+
+        # Setup enhanced logging and monitoring
+        if enable_enhancements:
+            self.logger = self._setup_enhanced_logging()
+            self.performance_metrics = {
+                'prediction_count': 0,
+                'total_execution_time': 0.0,
+                'error_count': 0,
+                'cache_hits': 0,
+                'cache_misses': 0
+            }
+            self._feature_cache = {}
+            self._data_quality_cache = {}
+        else:
+            self.logger = logging.getLogger('prophet_service')
 
         params_file = Path("../utils/prophet_models/prophet_best_params.json")
         if params_file.exists():
             with open(params_file, 'r') as f:
                 self.best_params = json.load(f)
+
+    def _load_enhanced_config(self) -> Dict[str, Any]:
+        """Load enhanced configuration with intelligent defaults"""
+        default_config = {
+            "data_quality": {
+                "enable_validation": True,
+                "min_data_points": 100,
+                "max_missing_percentage": 0.1,
+                "outlier_threshold": 3.0,
+                "quality_threshold": 0.7,
+                "auto_fix_issues": True
+            },
+            "performance": {
+                "enable_caching": True,
+                "enable_parallel_training": True,
+                "cache_expiry_minutes": 30,
+                "max_workers": 4
+            },
+            "model_settings": {
+                "default_forecast_hours": 48,
+                "enable_ml_models": True,
+                "enable_xgboost": True,
+                "enable_lightgbm": True,
+                "ensemble_weights": {
+                    "prophet": 0.4,
+                    "xgboost": 0.35,
+                    "lightgbm": 0.25
+                }
+            },
+            "monitoring": {
+                "track_performance": True,
+                "log_predictions": True,
+                "log_level": "INFO"
+            }
+        }
+
+        config_file = Path("config/prophet_enhanced_config.json")
+        try:
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    user_config = json.load(f)
+                # Deep merge configurations
+                for section, values in user_config.items():
+                    if section in default_config:
+                        default_config[section].update(values)
+                    else:
+                        default_config[section] = values
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"Could not load config: {e}")
+
+        return default_config
+
+    def _setup_enhanced_logging(self) -> logging.Logger:
+        """Setup enhanced logging for the service"""
+        logger = logging.getLogger('enhanced_prophet_service')
+
+        if not logger.handlers:
+            # Create logs directory
+            log_dir = Path("logs")
+            log_dir.mkdir(exist_ok=True)
+
+            # Setup file handler
+            handler = logging.FileHandler(log_dir / "prophet_predictions.log")
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+
+        return logger
+
+    def _monitor_performance(self, func):
+        """Performance monitoring decorator"""
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not self.enable_enhancements or not self.config.get("monitoring", {}).get("track_performance", False):
+                return func(*args, **kwargs)
+
+            start_time = time.time()
+            self.performance_metrics['prediction_count'] += 1
+
+            try:
+                result = func(*args, **kwargs)
+                execution_time = time.time() - start_time
+                self.performance_metrics['total_execution_time'] += execution_time
+
+                self.logger.info(
+                    f"{func.__name__} completed in {execution_time:.2f}s")
+                return result
+
+            except Exception as e:
+                self.performance_metrics['error_count'] += 1
+                self.logger.error(f"{func.__name__} failed: {e}")
+                raise
+
+        return wrapper
+
+    def validate_data_quality(self, df: pd.DataFrame) -> Tuple[bool, Dict[str, Any]]:
+        """Enhanced data quality validation"""
+        if not self.enable_enhancements or not self.config.get("data_quality", {}).get("enable_validation", False):
+            return True, {"validation_skipped": True}
+
+        quality_issues = []
+        quality_score = 1.0
+
+        # Check minimum data points
+        min_points = self.config["data_quality"].get("min_data_points", 100)
+        if len(df) < min_points:
+            quality_issues.append(
+                f"Insufficient data: {len(df)} < {min_points}")
+            quality_score -= 0.3
+
+        # Check missing values
+        if 'y' in df.columns:
+            missing_pct = df['y'].isna().sum() / len(df)
+            max_missing = self.config["data_quality"].get(
+                "max_missing_percentage", 0.1)
+            if missing_pct > max_missing:
+                quality_issues.append(
+                    f"Too many missing values: {missing_pct:.2%}")
+                quality_score -= 0.3
+
+                # Auto-fix if enabled
+                if self.config["data_quality"].get("auto_fix_issues", False):
+                    df['y'] = df['y'].fillna(df['y'].median())
+                    quality_issues.append("Auto-fixed missing values")
+
+        # Check for outliers
+        if 'y' in df.columns and len(df) > 10:
+            z_threshold = self.config["data_quality"].get(
+                "outlier_threshold", 3.0)
+            z_scores = np.abs((df['y'] - df['y'].mean()) / df['y'].std())
+            outlier_mask = z_scores > z_threshold
+            outlier_pct = outlier_mask.sum() / len(df)
+
+            if outlier_pct > 0.05:
+                quality_issues.append(
+                    f"High outlier percentage: {outlier_pct:.2%}")
+                quality_score -= 0.2
+
+        quality_score = max(0, quality_score)
+        is_valid = quality_score >= self.config["data_quality"].get(
+            "quality_threshold", 0.7)
+
+        quality_report = {
+            "overall_score": quality_score,
+            "issues": quality_issues,
+            "data_points": len(df),
+            "missing_percentage": missing_pct if 'y' in df.columns else 0
+        }
+
+        if quality_issues and self.enable_enhancements:
+            self.logger.warning(f"Data quality issues: {quality_issues}")
+
+        return is_valid, quality_report
+
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """Get performance summary"""
+        if not self.enable_enhancements:
+            return {"enhancements_disabled": True}
+
+        total_predictions = self.performance_metrics['prediction_count']
+        avg_time = (
+            self.performance_metrics['total_execution_time'] / max(1, total_predictions))
+
+        return {
+            "total_predictions": total_predictions,
+            "average_execution_time_seconds": avg_time,
+            "error_count": self.performance_metrics['error_count'],
+            "error_rate": self.performance_metrics['error_count'] / max(1, total_predictions),
+            "cache_hit_rate": self.performance_metrics['cache_hits'] / max(1,
+                                                                           self.performance_metrics['cache_hits'] + self.performance_metrics['cache_misses'])
+        }
+
+    def get_configuration_summary(self) -> Dict[str, Any]:
+        """Get current configuration summary"""
+        if not self.enable_enhancements:
+            return {"enhancements_disabled": True}
+        return self.config
 
     def _prepare_data(self, df, include_weather=True):
         """Prepare data with weather integration and off-peak optimization"""
@@ -508,8 +714,39 @@ class ProphetForecastService:
 
     def ensemble_forecast(self, hours_ahead: int = 48, use_xgboost: bool = True, use_lightgbm: bool = False) -> list:
         """Enhanced ensemble forecasting with adaptive strategy based on data availability"""
+
+        # Apply performance monitoring if enhancements are enabled
+        if self.enable_enhancements:
+            return self._monitor_performance(self._enhanced_ensemble_forecast)(hours_ahead, use_xgboost, use_lightgbm)
+        else:
+            return self._original_ensemble_forecast(hours_ahead, use_xgboost, use_lightgbm)
+
+    def _enhanced_ensemble_forecast(self, hours_ahead: int = 48, use_xgboost: bool = True, use_lightgbm: bool = False) -> list:
+        """Enhanced ensemble forecasting with data validation and monitoring"""
+        if self.enable_enhancements:
+            self.logger.info(
+                f"Starting enhanced ensemble forecast for {hours_ahead} hours")
+
         print("🚀 Starting Enhanced Ensemble Forecasting (Prophet + ML)")
 
+        # Get prepared data
+        df = self._prepare_data(self.repository.get_all_data())
+        if df.empty:
+            raise ValueError("No data available for forecasting")
+
+        # Validate data quality if enhancements are enabled
+        if self.enable_enhancements:
+            is_valid, quality_report = self.validate_data_quality(df)
+            if not is_valid and quality_report["overall_score"] < 0.5:
+                self.logger.error(
+                    f"Critical data quality issues: {quality_report['issues']}")
+                raise ValueError(
+                    f"Data quality too poor for predictions: score={quality_report['overall_score']}")
+
+        return self._original_ensemble_forecast(hours_ahead, use_xgboost, use_lightgbm)
+
+    def _original_ensemble_forecast(self, hours_ahead: int = 48, use_xgboost: bool = True, use_lightgbm: bool = False) -> list:
+        """Original ensemble forecasting logic"""
         # Get prepared data
         df = self._prepare_data(self.repository.get_all_data())
         if df.empty:
@@ -1405,3 +1642,42 @@ class ProphetForecastService:
                 "Off-peak patterns stable - current model performing well")
 
         return recommendations
+
+    # Enhanced convenience methods
+    def enhanced_ensemble_forecast(self, hours_ahead: int = None, use_xgboost: bool = None, use_lightgbm: bool = None) -> list:
+        """Convenience method for enhanced ensemble forecasting"""
+        # Use configuration defaults if available
+        if self.enable_enhancements and hasattr(self, 'config'):
+            hours_ahead = hours_ahead or self.config.get(
+                "model_settings", {}).get("default_forecast_hours", 48)
+            use_xgboost = use_xgboost if use_xgboost is not None else self.config.get(
+                "model_settings", {}).get("enable_ml_models", True)
+            use_lightgbm = use_lightgbm if use_lightgbm is not None else self.config.get(
+                "model_settings", {}).get("enable_ml_models", True)
+        else:
+            hours_ahead = hours_ahead or 48
+            use_xgboost = use_xgboost if use_xgboost is not None else True
+            # Enable LightGBM by default too
+            use_lightgbm = use_lightgbm if use_lightgbm is not None else True
+
+        return self.ensemble_forecast(hours_ahead, use_xgboost, use_lightgbm)
+
+    def update_configuration(self, section: str, key: str, value: Any):
+        """Update configuration value"""
+        if not self.enable_enhancements:
+            raise ValueError("Enhancements not enabled")
+
+        if section in self.config and key in self.config[section]:
+            self.config[section][key] = value
+            if hasattr(self, 'logger'):
+                self.logger.info(
+                    f"Configuration updated: {section}.{key} = {value}")
+        else:
+            raise ValueError(f"Invalid configuration path: {section}.{key}")
+
+# Factory function for easy enhanced service creation
+
+
+def create_enhanced_prophet_service(repository=None, enable_all_features=True):
+    """Create an enhanced Prophet service with all improvements"""
+    return ProphetForecastService(repository, enable_enhancements=enable_all_features)

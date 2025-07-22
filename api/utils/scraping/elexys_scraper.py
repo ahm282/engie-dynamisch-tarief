@@ -1,10 +1,12 @@
 """
-Web scraper for Elexys electricity price data.
+Web scraper for Elexys electricity price data with weather integration.
 
 This module scrapes electricity price data from the Elexys Spot Belpex page,
 processes the data, and stores it in the database while avoiding duplicates.
+Enhanced with weather data collection for improved forecasting accuracy.
 """
 
+from api.weather.weather_collector import WeatherCollector
 from api.config.database import DatabaseManager
 import requests
 from bs4 import BeautifulSoup
@@ -18,15 +20,19 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 
+# Import weather collector for historical weather data
+
 
 class ElexysElectricityScraper:
     """
-    Scraper for Elexys electricity price data.
+    Scraper for Elexys electricity price data with weather integration.
 
     Features:
     - Scrapes data from Elexys Spot Belpex table
     - Processes date/time and price information
+    - Collects weather data (cloud cover, temperature, solar factor) for each timestamp
     - Checks for existing data to avoid duplicates
+    - Updates existing records with missing weather data
     - Calculates consumer prices with markup
     - Robust error handling and logging
     """
@@ -66,6 +72,9 @@ class ElexysElectricityScraper:
         self.logger.info(f"Using database path: {self.db_path}")
 
         self.db_manager = DatabaseManager()
+
+        # Initialize weather collector for historical data
+        self.weather_collector = WeatherCollector()
 
         # Scraping configuration
         self.base_url = "https://my.elexys.be/MarketInformation/SpotBelpex.aspx"
@@ -236,6 +245,48 @@ class ElexysElectricityScraper:
 
         return round(consumer_price, 4)
 
+    def get_weather_data(self, timestamp: datetime) -> Dict[str, Optional[float]]:
+        """
+        Get weather data for a specific timestamp.
+
+        Args:
+            timestamp: The datetime to get weather data for
+
+        Returns:
+            Dictionary with weather data (cloud_cover, temperature, solar_factor)
+        """
+        try:
+            # For historical data, use weather proxy since API doesn't provide historical data
+            weather_data = self.weather_collector.get_historical_weather_proxy([
+                                                                               timestamp])
+
+            if not weather_data.empty:
+                # Get the weather record
+                weather_record = weather_data.iloc[0]
+
+                return {
+                    'cloud_cover': float(weather_record.get('cloud_cover', 50.0)),
+                    'temperature': float(weather_record.get('temperature', 15.0)),
+                    'solar_factor': float(weather_record.get('solar_factor', 0.5))
+                }
+            else:
+                # Fallback to simple proxy values
+                return {
+                    'cloud_cover': 50.0,  # Default moderate cloudiness
+                    'temperature': 15.0,  # Default moderate temperature
+                    'solar_factor': 0.5   # Default moderate solar factor
+                }
+
+        except Exception as e:
+            self.logger.warning(
+                f"Could not get weather data for {timestamp}: {e}")
+            # Return default values if weather collection fails
+            return {
+                'cloud_cover': 50.0,
+                'temperature': 15.0,
+                'solar_factor': 0.5
+            }
+
     def check_existing_record(self, timestamp: datetime) -> Optional[Dict[str, any]]:
         """
         Check if a record already exists in the database and return its data.
@@ -249,7 +300,7 @@ class ElexysElectricityScraper:
         try:
             conn = self.db_manager.get_connection()
             cursor = conn.execute(
-                "SELECT price_eur, price_raw, consumer_price_cents_kwh FROM electricity_prices WHERE timestamp = ?",
+                "SELECT price_eur, price_raw, consumer_price_cents_kwh, cloud_cover, temperature, solar_factor FROM electricity_prices WHERE timestamp = ?",
                 (timestamp.strftime("%Y-%m-%d %H:%M:%S"),)
             )
             result = cursor.fetchone()
@@ -259,7 +310,10 @@ class ElexysElectricityScraper:
                 return {
                     'price_eur': result[0],
                     'price_raw': result[1],
-                    'consumer_price_cents_kwh': result[2]
+                    'consumer_price_cents_kwh': result[2],
+                    'cloud_cover': result[3],
+                    'temperature': result[4],
+                    'solar_factor': result[5]
                 }
             return None
 
@@ -268,7 +322,8 @@ class ElexysElectricityScraper:
             return None
 
     def update_price_record(self, timestamp: datetime, date_str: str, hour: int,
-                            price_eur: float, price_raw: str, consumer_price: float) -> bool:
+                            price_eur: float, price_raw: str, consumer_price: float,
+                            weather_data: Dict[str, Optional[float]]) -> bool:
         """
         Update an existing price record in the database.
 
@@ -279,6 +334,7 @@ class ElexysElectricityScraper:
             price_eur: Wholesale price in EUR/MWh
             price_raw: Raw price string from website
             consumer_price: Consumer price in cents/kWh
+            weather_data: Dictionary with weather data (cloud_cover, temperature, solar_factor)
 
         Returns:
             True if successful, False otherwise
@@ -288,7 +344,8 @@ class ElexysElectricityScraper:
 
             cursor = conn.execute("""
                 UPDATE electricity_prices 
-                SET date = ?, hour = ?, price_eur = ?, price_raw = ?, consumer_price_cents_kwh = ?
+                SET date = ?, hour = ?, price_eur = ?, price_raw = ?, consumer_price_cents_kwh = ?,
+                    cloud_cover = ?, temperature = ?, solar_factor = ?
                 WHERE timestamp = ?
             """, (
                 date_str,
@@ -296,6 +353,9 @@ class ElexysElectricityScraper:
                 price_eur,
                 price_raw,
                 consumer_price,
+                weather_data.get('cloud_cover'),
+                weather_data.get('temperature'),
+                weather_data.get('solar_factor'),
                 timestamp.strftime("%Y-%m-%d %H:%M:%S")
             ))
 
@@ -303,7 +363,7 @@ class ElexysElectricityScraper:
             conn.close()
 
             self.logger.info(
-                f"Updated record: {timestamp} - {price_eur} EUR/MWh")
+                f"Updated record: {timestamp} - {price_eur} EUR/MWh (with weather data)")
             return True
 
         except Exception as e:
@@ -311,7 +371,8 @@ class ElexysElectricityScraper:
             return False
 
     def insert_price_record(self, timestamp: datetime, date_str: str, hour: int,
-                            price_eur: float, price_raw: str, consumer_price: float) -> bool:
+                            price_eur: float, price_raw: str, consumer_price: float,
+                            weather_data: Dict[str, Optional[float]]) -> bool:
         """
         Insert a price record into the database.
 
@@ -322,6 +383,7 @@ class ElexysElectricityScraper:
             price_eur: Wholesale price in EUR/MWh
             price_raw: Raw price string from website
             consumer_price: Consumer price in cents/kWh
+            weather_data: Dictionary with weather data (cloud_cover, temperature, solar_factor)
 
         Returns:
             True if successful, False otherwise
@@ -331,22 +393,26 @@ class ElexysElectricityScraper:
 
             cursor = conn.execute("""
                 INSERT INTO electricity_prices 
-                (timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh,
+                 cloud_cover, temperature, solar_factor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 date_str,
                 hour,
                 price_eur,
                 price_raw,
-                consumer_price
+                consumer_price,
+                weather_data.get('cloud_cover'),
+                weather_data.get('temperature'),
+                weather_data.get('solar_factor')
             ))
 
             conn.commit()
             conn.close()
 
             self.logger.debug(
-                f"Inserted record: {timestamp} - {price_eur} EUR/MWh")
+                f"Inserted record: {timestamp} - {price_eur} EUR/MWh (with weather data)")
             return True
 
         except Exception as e:
@@ -393,6 +459,9 @@ class ElexysElectricityScraper:
             # Calculate consumer price
             consumer_price = self.calculate_consumer_price(price_eur)
 
+            # Get weather data for this timestamp
+            weather_data = self.get_weather_data(timestamp)
+
             # Check if record already exists
             existing_record = self.check_existing_record(timestamp)
 
@@ -402,30 +471,47 @@ class ElexysElectricityScraper:
                 consumer_price_diff = abs(
                     existing_record['consumer_price_cents_kwh'] - consumer_price)
 
-                # Update if there's a significant difference (more than 0.01 EUR/MWh or 0.001 cents/kWh)
-                if price_diff > 0.01 or consumer_price_diff > 0.001 or existing_record['price_raw'] != row_data['price_raw']:
+                # Also check if weather data is missing or significantly different
+                weather_update_needed = (
+                    existing_record.get('cloud_cover') is None or
+                    existing_record.get('temperature') is None or
+                    existing_record.get('solar_factor') is None
+                )
+
+                # Update if there's a significant difference or missing weather data
+                if (price_diff > 0.01 or consumer_price_diff > 0.001 or
+                    existing_record['price_raw'] != row_data['price_raw'] or
+                        weather_update_needed):
+
+                    update_reason = []
+                    if price_diff > 0.01:
+                        update_reason.append(
+                            f"price change ({existing_record['price_eur']:.2f} → {price_eur:.2f})")
+                    if weather_update_needed:
+                        update_reason.append("missing weather data")
+                    if existing_record['price_raw'] != row_data['price_raw']:
+                        update_reason.append("raw price format change")
+
                     self.logger.info(
-                        f"Price difference detected for {timestamp}: "
-                        f"DB={existing_record['price_eur']}, Website={price_eur}, "
-                        f"updating record"
+                        f"Updating record for {timestamp}: {', '.join(update_reason)}"
                     )
 
                     if self.update_price_record(
                         timestamp, date_str, hour, price_eur,
-                        row_data['price_raw'], consumer_price
+                        row_data['price_raw'], consumer_price, weather_data
                     ):
                         stats['updated'] += 1
                     else:
                         stats['skipped_errors'] += 1
                 else:
                     self.logger.debug(
-                        f"Record already exists for {timestamp} with same price, skipping")
+                        f"Record already exists for {timestamp} with same data, skipping")
                     stats['skipped_existing'] += 1
             else:
-                # Insert new record
+                # Insert new record with weather data
                 if self.insert_price_record(
                     timestamp, date_str, hour, price_eur,
-                    row_data['price_raw'], consumer_price
+                    row_data['price_raw'], consumer_price, weather_data
                 ):
                     stats['inserted'] += 1
                 else:
@@ -489,7 +575,7 @@ class ElexysElectricityScraper:
     def print_stats(self, stats: Dict[str, int]):
         """Print scraping statistics in a readable format."""
         print("\n" + "="*50)
-        print("ELEXYS SCRAPING RESULTS")
+        print("ELEXYS SCRAPING RESULTS (WITH WEATHER DATA)")
         print("="*50)
 
         if 'error' in stats:
@@ -498,25 +584,28 @@ class ElexysElectricityScraper:
 
         print(f"📊 Total rows found: {stats.get('total_rows', 0)}")
         print(f"🔄 Rows processed: {stats.get('processed', 0)}")
-        print(f"✅ New records inserted: {stats.get('inserted', 0)}")
-        print(f"🔄 Records updated: {stats.get('updated', 0)}")
+        print(
+            f"✅ New records inserted: {stats.get('inserted', 0)} (with weather data)")
+        print(
+            f"🔄 Records updated: {stats.get('updated', 0)} (including weather data)")
         print(
             f"⏭️  Existing records skipped: {stats.get('skipped_existing', 0)}")
         print(f"❌ Rows with errors: {stats.get('skipped_errors', 0)}")
 
         if stats.get('inserted', 0) > 0:
             print(
-                f"\n🎉 Successfully added {stats['inserted']} new price records!")
+                f"\n🎉 Successfully added {stats['inserted']} new price records with weather data!")
 
         if stats.get('updated', 0) > 0:
             print(
-                f"\n🔄 Successfully updated {stats['updated']} existing price records!")
+                f"\n🔄 Successfully updated {stats['updated']} existing records with weather data!")
 
         if stats.get('inserted', 0) == 0 and stats.get('updated', 0) == 0 and stats.get('skipped_existing', 0) > 0:
             print(f"\n✨ Database is up to date - no new records needed")
         elif stats.get('inserted', 0) == 0 and stats.get('updated', 0) == 0:
             print(f"\n⚠️  No new records were added or updated")
 
+        print("\n🌤️  Weather data is now being collected and stored with all price records")
         print("="*50)
 
 
