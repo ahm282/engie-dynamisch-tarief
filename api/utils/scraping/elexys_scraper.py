@@ -353,9 +353,12 @@ class ElexysElectricityScraper:
                 price_eur,
                 price_raw,
                 consumer_price,
-                weather_data.get('cloud_cover'),
-                weather_data.get('temperature'),
-                weather_data.get('solar_factor'),
+                float(weather_data.get('cloud_cover')) if weather_data.get(
+                    'cloud_cover') is not None else None,
+                float(weather_data.get('temperature')) if weather_data.get(
+                    'temperature') is not None else None,
+                float(weather_data.get('solar_factor')) if weather_data.get(
+                    'solar_factor') is not None else None,
                 timestamp.strftime("%Y-%m-%d %H:%M:%S")
             ))
 
@@ -403,9 +406,12 @@ class ElexysElectricityScraper:
                 price_eur,
                 price_raw,
                 consumer_price,
-                weather_data.get('cloud_cover'),
-                weather_data.get('temperature'),
-                weather_data.get('solar_factor')
+                float(weather_data.get('cloud_cover')) if weather_data.get(
+                    'cloud_cover') is not None else None,
+                float(weather_data.get('temperature')) if weather_data.get(
+                    'temperature') is not None else None,
+                float(weather_data.get('solar_factor')) if weather_data.get(
+                    'solar_factor') is not None else None
             ))
 
             conn.commit()
