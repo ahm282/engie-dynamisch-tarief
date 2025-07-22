@@ -49,11 +49,21 @@ class ElexysElectricityScraper:
         if db_path:
             self.db_path = db_path
         else:
-            self.db_path = os.path.join(
-                os.path.dirname(os.path.dirname(
-                    os.path.dirname(os.path.abspath(__file__)))),
-                'api', 'db', 'electricity_prices.db'
-            )
+            # Calculate absolute path more reliably
+            # This file is in: api/utils/scraping/elexys_scraper.py
+            # Database is at: api/db/electricity_prices.db
+            current_file = os.path.abspath(__file__)
+            utils_dir = os.path.dirname(current_file)  # api/utils/scraping
+            api_dir = os.path.dirname(os.path.dirname(utils_dir))  # api
+            self.db_path = os.path.join(api_dir, 'db', 'electricity_prices.db')
+
+        # Ensure database directory exists
+        db_dir = os.path.dirname(self.db_path)
+        if not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            self.logger.info(f"Created database directory: {db_dir}")
+
+        self.logger.info(f"Using database path: {self.db_path}")
 
         self.db_manager = DatabaseManager()
 

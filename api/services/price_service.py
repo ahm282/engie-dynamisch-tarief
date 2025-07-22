@@ -11,15 +11,16 @@ from datetime import datetime, timedelta
 
 from .base_service import BaseService
 from ..repositories import PriceDataRepository
+from ..repositories.electricity_price_repository import ElectricityPriceRepository
 from ..models import PriceRecord, ConsumptionCostAnalysis, HourlyConsumption
 
 
 class PriceService(BaseService):
     """Service for price data operations."""
 
-    def __init__(self, repository: PriceDataRepository = None):
+    def __init__(self, repository: ElectricityPriceRepository = None):
         """Initialize service with repository dependency injection."""
-        super().__init__(repository or PriceDataRepository())
+        super().__init__(repository or ElectricityPriceRepository())
 
     def _create_price_record(self, row: pd.Series) -> PriceRecord:
         """Helper method to create a PriceRecord from a DataFrame row."""

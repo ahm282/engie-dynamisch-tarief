@@ -11,7 +11,7 @@ from pydantic import BaseModel
 class DatabaseConfig(BaseModel):
     """Database configuration settings."""
 
-    database_path: str = "api/db/electricity_prices.db"
+    database_path: str = "db/electricity_prices.db"  # Relative to api directory
     connection_timeout: int = 30
 
 
@@ -43,7 +43,21 @@ class ApplicationConfig:
     @property
     def database_path(self) -> str:
         """Get database path."""
-        return self.database.database_path
+        # Convert relative path to absolute path based on this file's location
+        if os.path.isabs(self.database.database_path):
+            return self.database.database_path
+        else:
+            # Get the absolute path relative to the api directory
+            # This file is in: api/config/settings.py
+            # Database should be at: api/db/electricity_prices.db
+            config_dir = os.path.dirname(
+                os.path.abspath(__file__))  # api/config
+            api_dir = os.path.dirname(config_dir)  # api
+            # Remove the 'api/' prefix from the database path since we're already in the api directory
+            db_relative_path = self.database.database_path
+            if db_relative_path.startswith('api/'):
+                db_relative_path = db_relative_path[4:]  # Remove 'api/' prefix
+            return os.path.join(api_dir, db_relative_path)
 
     @property
     def is_debug(self) -> bool:
