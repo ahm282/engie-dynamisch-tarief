@@ -6,6 +6,7 @@ from typing import List, Optional
 from fastapi import HTTPException
 import random
 import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
 
 from .base_service import BaseService
@@ -20,8 +21,28 @@ class PriceService(BaseService):
         """Initialize service with repository dependency injection."""
         super().__init__(repository or PriceDataRepository())
 
-    @staticmethod
-    def categorize_price(consumer_price_cents_kwh: float) -> str:
+    def _create_price_record(self, row: pd.Series) -> PriceRecord:
+        """Helper method to create a PriceRecord from a DataFrame row."""
+        consumer_price = float(row['consumer_price_cents_kwh'])
+        category = self.categorize_price(consumer_price)
+
+        return PriceRecord(
+            timestamp=row['timestamp'],
+            date=row['date'],
+            hour=int(row['hour']),
+            price_eur=round(float(row['price_eur']), 3),
+            price_raw=row['price_raw'],
+            consumer_price_cents_kwh=round(consumer_price, 3),
+            price_category=category,
+            cloud_cover=round(float(row['cloud_cover']), 2) if pd.notna(
+                row.get('cloud_cover')) else None,
+            temperature=round(float(row['temperature']), 2) if pd.notna(
+                row.get('temperature')) else None,
+            solar_factor=round(float(row['solar_factor']), 2) if pd.notna(
+                row.get('solar_factor')) else None
+        )
+
+    def categorize_price(self, consumer_price_cents_kwh: float) -> str:
         """
         Categorize consumer price into cheap, regular, expensive, or extremely expensive.
 
@@ -93,7 +114,7 @@ class PriceService(BaseService):
             if df.empty:
                 return []
 
-            # Verify required columns exist
+            # Verify required columns exist (weather columns are optional)
             required_columns = ['timestamp', 'date', 'hour',
                                 'price_eur', 'price_raw', 'consumer_price_cents_kwh']
             missing_columns = [
@@ -104,21 +125,10 @@ class PriceService(BaseService):
                     detail=f"Missing required columns in data: {missing_columns}"
                 )
 
-            # Convert to Pydantic models with categorization
+            # Convert to Pydantic models with categorization and weather data
             records = []
             for _, row in df.iterrows():
-                consumer_price = float(row['consumer_price_cents_kwh'])
-                category = self.categorize_price(consumer_price)
-
-                records.append(PriceRecord(
-                    timestamp=row['timestamp'],
-                    date=row['date'],
-                    hour=int(row['hour']),
-                    price_eur=round(float(row['price_eur']), 3),
-                    price_raw=row['price_raw'],
-                    consumer_price_cents_kwh=round(consumer_price, 3),
-                    price_category=category
-                ))
+                records.append(self._create_price_record(row))
 
             return records
 
@@ -147,7 +157,7 @@ class PriceService(BaseService):
                     "hours_analyzed": hours
                 }
 
-            # Verify required columns exist
+            # Verify required columns exist (weather columns are optional)
             required_columns = ['timestamp', 'date', 'hour',
                                 'price_eur', 'price_raw', 'consumer_price_cents_kwh']
             missing_columns = [
@@ -158,21 +168,10 @@ class PriceService(BaseService):
                     detail=f"Missing required columns in data: {missing_columns}"
                 )
 
-            # Convert to Pydantic models with categorization
+            # Convert to Pydantic models with categorization and weather data
             records = []
             for _, row in df.iterrows():
-                consumer_price = float(row['consumer_price_cents_kwh'])
-                category = self.categorize_price(consumer_price)
-
-                records.append(PriceRecord(
-                    timestamp=row['timestamp'],
-                    date=row['date'],
-                    hour=int(row['hour']),
-                    price_eur=round(float(row['price_eur']), 3),
-                    price_raw=row['price_raw'],
-                    consumer_price_cents_kwh=round(consumer_price, 3),
-                    price_category=category
-                ))
+                records.append(self._create_price_record(row))
 
             # Calculate category distribution
             category_counts = {}

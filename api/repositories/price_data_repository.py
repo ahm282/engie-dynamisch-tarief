@@ -54,11 +54,12 @@ class PriceDataRepository(BaseRepository):
         limit: int = None,
         order: str = "desc"
     ) -> pd.DataFrame:
-        """Find price records with various filters."""
+        """Find price records with various filters including weather data."""
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh,
+                       cloud_cover, temperature, solar_factor
                 FROM electricity_prices
                 WHERE 1=1
             """
@@ -103,11 +104,12 @@ class PriceDataRepository(BaseRepository):
         hour: Optional[int] = None,
         order: str = "desc"
     ) -> pd.DataFrame:
-        """Find all price records with filters - no limit applied."""
+        """Find all price records with filters including weather data - no limit applied."""
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh,
+                       cloud_cover, temperature, solar_factor
                 FROM electricity_prices
                 WHERE 1=1
             """
@@ -138,11 +140,12 @@ class PriceDataRepository(BaseRepository):
             conn.close()
 
     def find_current_prices(self, hours: int = 24) -> pd.DataFrame:
-        """Find most recent price data."""
+        """Find most recent price data with weather information."""
         conn = self.db_manager.get_connection()
         try:
             query = """
-                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh
+                SELECT timestamp, date, hour, price_eur, price_raw, consumer_price_cents_kwh,
+                       cloud_cover, temperature, solar_factor
                 FROM electricity_prices
                 ORDER BY timestamp DESC
                 LIMIT ?

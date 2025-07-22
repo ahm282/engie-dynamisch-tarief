@@ -138,7 +138,11 @@ CREATE TABLE electricity_prices (
     price_eur REAL NOT NULL,
     price_raw TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    consumer_price_cents_kwh REAL
+    consumer_price_cents_kwh REAL,
+    cloud_cover REAL,
+    temperature REAL,
+    solar_factor REAL,
+    UNIQUE(timestamp)
 );
 ```
 
