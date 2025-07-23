@@ -219,21 +219,10 @@ class PriceService(BaseService):
                     detail=f"Missing required columns in data: {missing_columns}"
                 )
 
-            # Convert to Pydantic models with categorization
+            # Convert to Pydantic models with categorization and weather data
             records = []
             for _, row in df.iterrows():
-                consumer_price = float(row['consumer_price_cents_kwh'])
-                category = self.categorize_price(consumer_price)
-
-                records.append(PriceRecord(
-                    timestamp=row['timestamp'],
-                    date=row['date'],
-                    hour=int(row['hour']),
-                    price_eur=round(float(row['price_eur']), 3),
-                    price_raw=row['price_raw'],
-                    consumer_price_cents_kwh=round(consumer_price, 3),
-                    price_category=category
-                ))
+                records.append(self._create_price_record(row))
 
             # Calculate category distribution
             category_counts = {}
