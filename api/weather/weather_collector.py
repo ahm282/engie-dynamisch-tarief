@@ -42,63 +42,129 @@ class WeatherCollector:
         """
         Calculate solar production factor based on cloud cover AND time of day.
         Solar panels cannot generate electricity without sunlight!
-        
+
+        Uses accurate astronomical sunrise/sunset calculations for Belgium.
+
         Args:
             cloud_cover: Cloud coverage percentage (0-100)
             timestamp: DateTime object to determine sun position (optional)
-        
+
         Returns:
             Solar factor between 0.0 and 1.0
         """
         if timestamp is None:
             # If no timestamp provided, use current time (for backward compatibility)
             timestamp = datetime.now(timezone.utc)
-        
-        # Get hour in local time (approximate for Belgium - UTC+1/+2)
-        # For simplicity, using UTC+1 (winter time)
-        local_hour = (timestamp.hour + 1) % 24
-        
-        # Solar generation is only possible during daylight hours
-        # For Belgium in summer: roughly sunrise ~5:30, sunset ~21:30
-        # For Belgium in winter: roughly sunrise ~8:30, sunset ~17:00
-        
-        # Get month to adjust for seasonal variation
+
+        # Convert to local time for Belgium (UTC+1 in winter, UTC+2 in summer)
         month = timestamp.month
-        
-        # Define sunrise and sunset hours by month (approximate for Belgium)
-        if month in [11, 12, 1, 2]:  # Winter months
-            sunrise_hour = 8.0
-            sunset_hour = 17.0
-        elif month in [3, 4, 9, 10]:  # Spring/Autumn
-            sunrise_hour = 7.0
-            sunset_hour = 19.0
-        else:  # Summer months (5-8)
-            sunrise_hour = 5.5
-            sunset_hour = 21.5
-        
+        if month >= 4 and month <= 9:  # Summer time (UTC+2)
+            local_hour = (timestamp.hour + 2) % 24
+            timezone_offset = 2
+        else:  # Winter time (UTC+1)
+            local_hour = (timestamp.hour + 1) % 24
+            timezone_offset = 1
+
+        # Accurate astronomical sunrise/sunset calculation for Belgium (50.8°N, 4.4°E)
+        # Using proper Julian day and solar position calculations
+
+        # Convert to Julian day number
+        a = (14 - timestamp.month) // 12
+        y = timestamp.year - a
+        m = timestamp.month + 12 * a - 3
+        julian_day = timestamp.day + \
+            (153 * m + 2) // 5 + 365 * y + \
+            y // 4 - y // 100 + y // 400 + 1721119
+
+        # Days since J2000.0
+        n = julian_day - 2451545.0
+
+        # Mean solar longitude
+        L = (280.460 + 0.9856474 * n) % 360
+
+        # Mean anomaly
+        g = np.radians((357.528 + 0.9856003 * n) % 360)
+
+        # Ecliptic longitude
+        lambda_sun = np.radians(L + 1.915 * np.sin(g) + 0.020 * np.sin(2 * g))
+
+        # Solar declination
+        declination = np.arcsin(
+            np.sin(np.radians(23.439)) * np.sin(lambda_sun))
+
+        # Belgium coordinates
+        latitude = 50.8
+        longitude = 4.4
+
+        # Equation of time correction (longitude difference from standard meridian)
+        # Standard meridian is always 15°E for Central European Time, regardless of DST
+        equation_of_time_minutes = 4 * (longitude - 15)
+
+        # Hour angle at sunrise/sunset
+        lat_rad = np.radians(latitude)
+        cos_hour_angle = -np.tan(lat_rad) * np.tan(declination)
+
+        if cos_hour_angle > 1:
+            # Polar night (not applicable to Belgium)
+            sunrise_hour = 12
+            sunset_hour = 12
+        elif cos_hour_angle < -1:
+            # Polar day (not applicable to Belgium)
+            sunrise_hour = 0
+            sunset_hour = 24
+        else:
+            hour_angle = np.arccos(cos_hour_angle)
+            hour_angle_degrees = np.degrees(hour_angle)
+
+            # Calculate sunrise and sunset in local solar time
+            sunrise_solar = 12 - hour_angle_degrees / 15 + equation_of_time_minutes / 60
+            sunset_solar = 12 + hour_angle_degrees / 15 + equation_of_time_minutes / 60
+
+            # Convert to local clock time by adding timezone offset
+            sunrise_hour = sunrise_solar + timezone_offset
+            sunset_hour = sunset_solar + timezone_offset
+
+        # Apply safety bounds for Belgium
+        sunrise_hour = max(2.0, min(10.0, sunrise_hour))
+        sunset_hour = max(15.0, min(23.5, sunset_hour))
+
         # No solar generation during night hours
         if local_hour < sunrise_hour or local_hour > sunset_hour:
             return 0.0
-        
-        # Calculate solar angle efficiency (lower at dawn/dusk)
+
+        # Calculate solar efficiency based on sun elevation angle
         daylight_hours = sunset_hour - sunrise_hour
-        hour_from_sunrise = local_hour - sunrise_hour
-        hour_from_noon = abs((sunrise_hour + daylight_hours / 2) - local_hour)
-        
-        # Solar efficiency based on sun angle (peaks at solar noon)
-        max_efficiency_hours = daylight_hours / 4  # High efficiency for middle 50% of day
-        if hour_from_noon <= max_efficiency_hours:
-            sun_efficiency = 1.0  # Peak efficiency
+        solar_noon = (sunrise_hour + sunset_hour) / 2
+        hour_from_noon = abs(local_hour - solar_noon)
+
+        # Sun elevation angle approximation
+        # Maximum elevation at solar noon, decreasing towards sunrise/sunset
+        max_hour_angle = daylight_hours / 2
+        if max_hour_angle > 0:
+            relative_position = hour_from_noon / \
+                max_hour_angle  # 0 at noon, 1 at sunrise/sunset
         else:
-            # Gradual reduction towards dawn/dusk
-            sun_efficiency = max(0.1, 1.0 - (hour_from_noon - max_efficiency_hours) / (daylight_hours / 2 - max_efficiency_hours))
-        
-        # Cloud reduction factor (clear sky = 1.0, overcast = 0.1)
-        cloud_efficiency = max(0.1, (100 - cloud_cover) / 100)
-        
+            relative_position = 0
+
+        # Solar elevation efficiency (cosine relationship)
+        sun_elevation_factor = np.cos(np.radians(90 * relative_position))
+
+        # Apply minimum efficiency threshold (atmospheric scattering, etc.)
+        sun_efficiency = max(0.1, sun_elevation_factor)
+
+        # Seasonal solar intensity adjustment based on solar declination
+        # Maximum at summer solstice, minimum at winter solstice
+        seasonal_factor = 0.85 + 0.15 * np.sin(declination)
+        sun_efficiency *= seasonal_factor
+
+        # Cloud reduction factor
+        # Clear sky = 1.0, completely overcast = 0.05
+        # Even on overcast days, some diffuse light gets through
+        cloud_efficiency = max(0.05, (100 - cloud_cover) / 100)
+
         # Combined solar factor
         solar_factor = sun_efficiency * cloud_efficiency
-        
+
         return round(solar_factor, 2)
 
     def get_forecast(self, hours=24):
