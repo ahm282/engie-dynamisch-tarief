@@ -27,19 +27,78 @@ class WeatherCollector:
             )
             weather = observation.weather
 
+            timestamp = datetime.now(timezone.utc)
             return {
-                'timestamp': datetime.now(timezone.utc),
+                'timestamp': timestamp,
                 'cloud_cover': round(weather.clouds, 2),
                 'temperature': round(weather.temperature('celsius')['temp'], 2),
-                'solar_factor': round(self._calculate_solar_factor(weather.clouds), 2)
+                'solar_factor': round(self._calculate_solar_factor(weather.clouds, timestamp), 2)
             }
         except Exception as e:
             print(f"❌ Error fetching current weather: {e}")
             return None
 
-    def _calculate_solar_factor(self, cloud_cover):
-        """Calculate solar production factor based on cloud cover"""
-        solar_factor = max(0, (100 - cloud_cover) / 100)
+    def _calculate_solar_factor(self, cloud_cover, timestamp=None):
+        """
+        Calculate solar production factor based on cloud cover AND time of day.
+        Solar panels cannot generate electricity without sunlight!
+        
+        Args:
+            cloud_cover: Cloud coverage percentage (0-100)
+            timestamp: DateTime object to determine sun position (optional)
+        
+        Returns:
+            Solar factor between 0.0 and 1.0
+        """
+        if timestamp is None:
+            # If no timestamp provided, use current time (for backward compatibility)
+            timestamp = datetime.now(timezone.utc)
+        
+        # Get hour in local time (approximate for Belgium - UTC+1/+2)
+        # For simplicity, using UTC+1 (winter time)
+        local_hour = (timestamp.hour + 1) % 24
+        
+        # Solar generation is only possible during daylight hours
+        # For Belgium in summer: roughly sunrise ~5:30, sunset ~21:30
+        # For Belgium in winter: roughly sunrise ~8:30, sunset ~17:00
+        
+        # Get month to adjust for seasonal variation
+        month = timestamp.month
+        
+        # Define sunrise and sunset hours by month (approximate for Belgium)
+        if month in [11, 12, 1, 2]:  # Winter months
+            sunrise_hour = 8.0
+            sunset_hour = 17.0
+        elif month in [3, 4, 9, 10]:  # Spring/Autumn
+            sunrise_hour = 7.0
+            sunset_hour = 19.0
+        else:  # Summer months (5-8)
+            sunrise_hour = 5.5
+            sunset_hour = 21.5
+        
+        # No solar generation during night hours
+        if local_hour < sunrise_hour or local_hour > sunset_hour:
+            return 0.0
+        
+        # Calculate solar angle efficiency (lower at dawn/dusk)
+        daylight_hours = sunset_hour - sunrise_hour
+        hour_from_sunrise = local_hour - sunrise_hour
+        hour_from_noon = abs((sunrise_hour + daylight_hours / 2) - local_hour)
+        
+        # Solar efficiency based on sun angle (peaks at solar noon)
+        max_efficiency_hours = daylight_hours / 4  # High efficiency for middle 50% of day
+        if hour_from_noon <= max_efficiency_hours:
+            sun_efficiency = 1.0  # Peak efficiency
+        else:
+            # Gradual reduction towards dawn/dusk
+            sun_efficiency = max(0.1, 1.0 - (hour_from_noon - max_efficiency_hours) / (daylight_hours / 2 - max_efficiency_hours))
+        
+        # Cloud reduction factor (clear sky = 1.0, overcast = 0.1)
+        cloud_efficiency = max(0.1, (100 - cloud_cover) / 100)
+        
+        # Combined solar factor
+        solar_factor = sun_efficiency * cloud_efficiency
+        
         return round(solar_factor, 2)
 
     def get_forecast(self, hours=24):
@@ -65,7 +124,7 @@ class WeatherCollector:
                         'timestamp': forecast_time.isoformat(),
                         'cloud_cover': round(weather.clouds, 2),
                         'temperature': round(weather.temperature('celsius')['temp'], 2),
-                        'solar_factor': round(self._calculate_solar_factor(weather.clouds), 2)
+                        'solar_factor': round(self._calculate_solar_factor(weather.clouds, forecast_time), 2)
                     })
 
                 # Stop when we have enough hours of forecast data
@@ -119,7 +178,7 @@ class WeatherCollector:
                         'time': forecast_time,
                         'temperature': weather.temperature('celsius')['temp'],
                         'cloud_cover': weather.clouds,
-                        'solar_factor': self._calculate_solar_factor(weather.clouds)
+                        'solar_factor': self._calculate_solar_factor(weather.clouds, forecast_time)
                     })
 
             if not target_forecasts:
@@ -191,7 +250,7 @@ class WeatherCollector:
                             'timestamp': target_hour,
                             'cloud_cover': round(cloud_cover, 2),
                             'temperature': round(temperature, 2),
-                            'solar_factor': round(self._calculate_solar_factor(cloud_cover), 2)
+                            'solar_factor': round(self._calculate_solar_factor(cloud_cover, target_hour), 2)
                         })
 
             return pd.DataFrame(weather_data)
@@ -249,7 +308,7 @@ class WeatherCollector:
             # Peak at hour 18 (6 PM)
             daily_temp_variation = 5 * np.sin(2 * np.pi * (hour - 6) / 24)
             temperature = base_temperature + daily_temp_variation
-            solar_factor = self._calculate_solar_factor(cloud_cover)
+            solar_factor = self._calculate_solar_factor(cloud_cover, timestamp)
 
             weather_data.append({
                 'timestamp': timestamp,
