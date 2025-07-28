@@ -360,33 +360,98 @@ class ProphetForecastService:
         return self._enhance_weather_features(df)
 
     def _enhance_weather_features(self, df):
-        """Create enhanced weather-based features with off-peak optimizations"""
+        """Create enhanced weather-based features with aggressive off-peak solar optimizations"""
         if 'hour' not in df.columns:
             df['hour'] = df['ds'].dt.hour
         if 'is_offpeak' not in df.columns:
             df['is_offpeak'] = df['ds'].dt.hour.between(10, 15).astype(int)
 
-        # Solar production impact
+        # Solar production impact (enhanced)
         solar_production = df['solar_factor'] * \
             np.maximum(0, np.sin(2 * np.pi * (df['hour'] - 6) / 12) ** 2)
         df['solar_production_factor'] = solar_production.round(2)
 
-        # Off-peak solar impact
+        # Phase 1.1: STRONGER SOLAR INTERACTION TERMS
+
+        # Non-linear solar interactions for extreme price depression
+        df['solar_factor_squared_offpeak'] = np.where(
+            df['is_offpeak'] == 1, df['solar_factor'] ** 2, 0).round(3)
+
+        df['solar_factor_cubed_offpeak'] = np.where(
+            df['is_offpeak'] == 1, df['solar_factor'] ** 3, 0).round(3)
+
+        # Solar-hour interaction with exponential emphasis on midday
+        df['solar_hour_squared_offpeak'] = np.where(
+            df['is_offpeak'] == 1,
+            df['solar_factor'] * (df['hour'] - 12) ** 2 * -0.5, 0).round(3)
+
+        # Exponential solar impact during peak solar + off-peak hours
+        df['solar_exponential_offpeak'] = np.where(
+            df['is_offpeak'] == 1,
+            np.exp(df['solar_factor'] * 3) * -2.0, 0).round(3)
+
+        # Solar ramp indicators for sudden price shifts
+        if len(df) > 1:
+            df['solar_factor_change_1h'] = df['solar_factor'].diff().fillna(0).round(3)
+            df['solar_rapid_increase'] = np.where(
+                (df['solar_factor_change_1h'] > 0.2) & (df['is_offpeak'] == 1),
+                df['solar_factor_change_1h'] * -10.0, 0).round(3)
+        else:
+            df['solar_factor_change_1h'] = 0
+            df['solar_rapid_increase'] = 0
+
+        # Enhanced off-peak solar impact (much more aggressive)
         df['offpeak_solar_impact'] = np.where(
-            df['is_offpeak'] == 1, df['solar_production_factor'] * -20.0, 0).round(2)
+            df['is_offpeak'] == 1, df['solar_production_factor'] * -35.0, 0).round(2)
 
-        # Sharp midday solar collapse
-        df['midday_solar_collapse'] = np.where((df['hour'].between(13, 15)) & (df['solar_factor'] > 0.6),
-                                               df['solar_factor'] * -25.0, 0).round(2)
+        # Multiple levels of solar oversupply
+        df['solar_oversupply_high'] = np.where(
+            (df['solar_factor'] > 0.85) & (df['hour'].between(11, 15)), 1, 0)
 
-        # Solar oversupply indicator
+        df['solar_oversupply_extreme'] = np.where(
+            (df['solar_factor'] > 0.9) & (df['hour'].between(12, 14)), 1, 0)
+
+        # Enhanced midday solar collapse with non-linear scaling
+        df['midday_solar_collapse'] = np.where(
+            (df['hour'].between(13, 15)) & (df['solar_factor'] > 0.6),
+            df['solar_factor'] ** 1.5 * -40.0, 0).round(2)
+
+        # Extreme solar collapse for very high solar during optimal hours
+        df['extreme_solar_collapse'] = np.where(
+            (df['hour'].between(12, 14)) & (df['solar_factor'] > 0.85),
+            df['solar_factor'] ** 2 * -60.0, 0).round(2)
+
+        # Standard solar oversupply indicator
         df['solar_oversupply'] = np.where(
             (df['solar_factor'] > 0.8) & (df['hour'].between(12, 15)), 1, 0)
+
+        # Phase 1.2: ENHANCED TEMPERATURE-SOLAR INTERACTIONS
 
         # Temperature-based demand
         temp_demand = np.where(df['temperature'] < 15, (15 - df['temperature']) / 10,
                                np.where(df['temperature'] > 25, (df['temperature'] - 25) / 10, 0))
         df['temp_demand_factor'] = temp_demand.round(2)
+
+        # Solar-temperature mild weather interaction (high solar + mild temp = very low prices)
+        mild_temp_indicator = ((df['temperature'] >= 15) & (
+            df['temperature'] <= 25)).astype(int)
+        df['solar_temp_mild_interaction'] = np.where(
+            df['is_offpeak'] == 1,
+            df['solar_factor'] * mild_temp_indicator * -15.0, 0).round(2)
+
+        # Phase 1.3: PRICE-TARGETED FEATURES
+
+        # Off-peak specific price statistics (rolling minimums)
+        if 'y' in df.columns:
+            offpeak_mask = df['is_offpeak'] == 1
+            df['offpeak_min_6h'] = df['y'].where(offpeak_mask).rolling(
+                window=6, min_periods=1).min().fillna(df['y']).round(2)
+            df['offpeak_median_24h'] = df['y'].where(offpeak_mask).rolling(
+                window=24, min_periods=1).median().fillna(df['y']).round(2)
+        else:
+            # For future predictions, use proxy values
+            df['offpeak_min_6h'] = 2.0  # Very low expected minimum
+            df['offpeak_median_24h'] = 8.0  # Expected off-peak median
 
         # Weather volatility
         weather_vol = df['cloud_cover'].rolling(
@@ -395,56 +460,127 @@ class ProphetForecastService:
         df['offpeak_weather_vol'] = np.where(
             df['is_offpeak'] == 1, weather_vol * 1.5, weather_vol).round(2)
 
-        # Combined weather impact on price
-        base_impact = (df['temp_demand_factor'] * 0.4 + (1 - df['solar_production_factor']) * 1.2 +
+        # Enhanced combined weather impact with aggressive solar terms
+        base_impact = (df['temp_demand_factor'] * 0.3 +
+                       (1 - df['solar_production_factor']) * 1.0 +
                        df['weather_volatility'] / 100 * 0.05)
+
+        # Much more aggressive off-peak solar impact
+        aggressive_solar_impact = (df['offpeak_solar_impact'] * 6.0 +
+                                   df['solar_exponential_offpeak'] * 2.0 +
+                                   df['solar_temp_mild_interaction'] * 1.5)
+
         df['weather_price_impact'] = np.where(
-            df['is_offpeak'] == 1, base_impact + df['offpeak_solar_impact'] * 4.0, base_impact).round(2)
+            df['is_offpeak'] == 1,
+            base_impact + aggressive_solar_impact,
+            base_impact).round(2)
 
         return df
 
     def tune_hyperparameters(self):
-        """Enhanced hyperparameter tuning with weather features"""
+        """Enhanced hyperparameter tuning optimized for extreme solar price scenarios"""
         df = self._prepare_data(self.repository.get_all_data())
 
+        # Enhanced parameter grid with focus on extreme solar scenarios
         param_grid = [
+            # Original parameters for baseline
             {'changepoint_prior_scale': 0.001,
                 'seasonality_prior_scale': 0.01, 'seasonality_mode': 'additive'},
             {'changepoint_prior_scale': 0.01, 'seasonality_prior_scale': 0.1,
                 'seasonality_mode': 'additive'},
-            {'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 1.0,
-                'seasonality_mode': 'multiplicative'},
-            {'changepoint_prior_scale': 0.5, 'seasonality_prior_scale': 10.0,
-                'seasonality_mode': 'additive'},
+
+            # Enhanced parameters for solar extreme scenarios
             {'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 5.0,
                 'seasonality_mode': 'additive', 'changepoint_range': 0.9},
             {'changepoint_prior_scale': 0.02, 'seasonality_prior_scale': 2.0,
                 'seasonality_mode': 'additive', 'changepoint_range': 0.8},
+
+            # NEW: Additive mode with high seasonality for strong solar regressor effects
+            {'changepoint_prior_scale': 0.08, 'seasonality_prior_scale': 8.0,
+                'seasonality_mode': 'additive', 'changepoint_range': 0.85},
+            {'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 12.0,
+                'seasonality_mode': 'additive', 'changepoint_range': 0.9},
+
+            # NEW: Very flexible models for capturing extreme solar effects
+            {'changepoint_prior_scale': 0.15, 'seasonality_prior_scale': 15.0,
+                'seasonality_mode': 'additive', 'changepoint_range': 0.95},
+            {'changepoint_prior_scale': 0.2, 'seasonality_prior_scale': 20.0,
+                'seasonality_mode': 'additive', 'changepoint_range': 0.9},
+
+            # Conservative multiplicative options (in case additive regressors work better with multiplicative base)
+            {'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 1.0,
+                'seasonality_mode': 'multiplicative'},
+            {'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 3.0,
+                'seasonality_mode': 'multiplicative', 'changepoint_range': 0.85},
         ]
 
         best_mape = float('inf')
+        best_offpeak_mape = float('inf')  # Track off-peak specific performance
+
         for params in param_grid:
             try:
                 model = Prophet(**params)
                 self._add_prophet_regressors(model, df)
                 model.fit(df)
+
+                # Cross-validation with focus on recent data (more relevant for solar patterns)
                 cv_df = cross_validation(
-                    model, horizon='48 hours', parallel="processes")
+                    model, horizon='48 hours', period='24 hours',
+                    initial='168 hours', parallel="processes")
                 performance = performance_metrics(cv_df)
                 mape = performance['mape'].mean()
-                if mape < best_mape:
-                    best_mape = mape
+
+                # Calculate off-peak specific MAPE for better solar model selection
+                cv_predictions = model.predict(cv_df)
+                cv_with_pred = cv_df.merge(
+                    cv_predictions[['ds', 'yhat']], on='ds', how='left')
+                cv_with_pred['hour'] = cv_with_pred['ds'].dt.hour
+                offpeak_data = cv_with_pred[cv_with_pred['hour'].between(
+                    10, 15)]
+
+                if len(offpeak_data) > 0:
+                    offpeak_mape = np.mean(
+                        np.abs((offpeak_data['y'] - offpeak_data['yhat']) / offpeak_data['y'])) * 100
+                else:
+                    offpeak_mape = mape
+
+                # Weighted scoring: 60% overall MAPE + 40% off-peak MAPE
+                combined_score = 0.6 * mape + 0.4 * offpeak_mape
+
+                if combined_score < best_mape:
+                    best_mape = combined_score
+                    best_offpeak_mape = offpeak_mape
                     self.best_params = params
+                    print(
+                        f"🎯 New best params: MAPE={mape:.2f}, Off-peak MAPE={offpeak_mape:.2f}, Combined={combined_score:.2f}")
+
             except Exception as e:
+                print(f"⚠️ Parameter set failed: {e}")
                 continue
 
-        # Save best parameters
+        # Save best parameters with enhanced metadata
         if self.best_params:
             PARAMS_FILE = Path(
                 "../utils/prophet_models/prophet_best_params.json")
             PARAMS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+            enhanced_params = {
+                'parameters': self.best_params,
+                'performance': {
+                    'combined_score': best_mape,
+                    'offpeak_mape': best_offpeak_mape,
+                    'tuning_date': pd.Timestamp.now().isoformat(),
+                    'optimization_focus': 'extreme_solar_scenarios'
+                }
+            }
+
             with open(PARAMS_FILE, 'w') as f:
-                json.dump(self.best_params, f)
+                json.dump(enhanced_params, f, indent=2)
+
+            print(
+                f"✅ Best parameters saved with combined score: {best_mape:.2f}")
+        else:
+            print("⚠️ No valid parameters found, using defaults")
             print(f"💾 Best parameters saved with MAPE: {best_mape:.4f}")
 
         return self.best_params
@@ -568,7 +704,7 @@ class ProphetForecastService:
         return features_df
 
     def _train_xgboost_residual_model(self, df, prophet_predictions):
-        """Train XGBoost model on Prophet residuals for enhanced price-awareness"""
+        """Train XGBoost model on Prophet residuals with focus on solar overestimation correction"""
         if not ML_AVAILABLE:
             print("⚠️ ML libraries not available, skipping XGBoost training")
             return None
@@ -587,44 +723,88 @@ class ProphetForecastService:
                 print("⚠️ Insufficient data for XGBoost training")
                 return None
 
+            # Phase 2.2: Weight samples where Prophet overestimates (positive residuals)
+            sample_weights = np.ones(len(residuals_clean))
+
+            # Heavy weight for cases where Prophet significantly overestimates
+            # Actual price much lower than predicted
+            overestimate_mask = residuals_clean < -5.0
+            sample_weights[overestimate_mask] *= 6.0
+
+            # Moderate weight for moderate overestimation
+            moderate_overest_mask = (
+                residuals_clean >= -5.0) & (residuals_clean < -2.0)
+            sample_weights[moderate_overest_mask] *= 3.0
+
+            # Extra weight for off-peak overestimation (solar scenarios)
+            if 'is_offpeak' in ml_features_clean.columns:
+                offpeak_overest_mask = (ml_features_clean['is_offpeak'] == 1) & (
+                    residuals_clean < -3.0)
+                sample_weights[offpeak_overest_mask] *= 4.0
+
+            print(
+                f"🎯 Residual XGBoost: {np.sum(overestimate_mask)} severe overestimation cases weighted 6x")
+
             # Time series split for validation
             tscv = TimeSeriesSplit(n_splits=3)
 
-            # XGBoost parameters optimized for residual modeling
+            # Enhanced XGBoost parameters for correcting overestimation
             xgb_params = {
                 'objective': 'reg:squarederror',
-                'n_estimators': 200,
-                'max_depth': 6,
-                'learning_rate': 0.1,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
+                'n_estimators': 300,  # More trees for better correction
+                'max_depth': 8,       # Deeper for complex solar interactions
+                'learning_rate': 0.08,  # Moderate learning rate
+                'subsample': 0.9,
+                'colsample_bytree': 0.9,
+                'reg_alpha': 0.05,    # Reduced regularization for more flexibility
+                'reg_lambda': 0.05,
+                'gamma': 0.1,
                 'random_state': 42,
                 'tree_method': 'auto'
             }
 
-            # Train model with cross-validation
+            # Train model with cross-validation and weighting
             cv_scores = []
             for train_idx, val_idx in tscv.split(ml_features_clean):
                 X_train, X_val = ml_features_clean.iloc[train_idx], ml_features_clean.iloc[val_idx]
                 y_train, y_val = residuals_clean[train_idx], residuals_clean[val_idx]
+                w_train = sample_weights[train_idx]
 
                 model = xgb.XGBRegressor(**xgb_params)
-                model.fit(X_train, y_train)
+                model.fit(X_train, y_train, sample_weight=w_train)
 
                 val_pred = model.predict(X_val)
                 val_mae = mean_absolute_error(y_val, val_pred)
                 cv_scores.append(val_mae)
 
-            # Train final model on all data
+            # Train final model on all data with sample weighting
             final_model = xgb.XGBRegressor(**xgb_params)
-            final_model.fit(ml_features_clean, residuals_clean)
+            final_model.fit(ml_features_clean, residuals_clean,
+                            sample_weight=sample_weights)
 
             avg_cv_score = np.mean(cv_scores)
-            print("🎯 XGBoost residual model trained")
+            print("🎯 XGBoost residual model trained with overestimation focus")
 
-            # Feature importance analysis
+            # Feature importance analysis with focus on solar features
             feature_importance = dict(
                 zip(ml_features_clean.columns, final_model.feature_importances_))
+            solar_features = {
+                k: v for k, v in feature_importance.items() if 'solar' in k.lower()}
+
+            print(
+                f"☀️ Solar feature importance in residual model: {len(solar_features)} features")
+
+            return {
+                'model': final_model,
+                'feature_columns': ml_features_clean.columns.tolist(),
+                'cv_score': avg_cv_score,
+                'feature_importance': feature_importance,
+                'sample_weighting': {
+                    'severe_overestimation': int(np.sum(overestimate_mask)),
+                    'moderate_overestimation': int(np.sum(moderate_overest_mask)),
+                    'total_samples': len(residuals_clean)
+                }
+            }
 
             return {
                 'model': final_model,
@@ -858,7 +1038,7 @@ class ProphetForecastService:
         return results.to_dict(orient='records')
 
     def _create_enhanced_ml_features(self, df):
-        """Create enhanced ML features with stronger solar interactions for limited data"""
+        """Create enhanced ML features with AGGRESSIVE solar interactions for extreme price prediction"""
         features = {}
 
         # Enhanced time features with solar interactions
@@ -869,10 +1049,11 @@ class ProphetForecastService:
         features['is_peak'] = df['is_peak']
         features['is_weekend'] = df['is_weekend']
 
-        # Solar features
+        # ENHANCED SOLAR FEATURES - Phase 1.1 Implementation
         if 'solar_factor' in df.columns:
             features['solar_factor'] = df['solar_factor']
-            # 🌞 CRITICAL: Strong solar-hour interactions
+
+            # Original strong interactions
             features['solar_hour_interaction'] = df['solar_factor'] * df['hour']
             features['solar_offpeak_interaction'] = df['solar_factor'] * \
                 df['is_offpeak']
@@ -880,29 +1061,73 @@ class ProphetForecastService:
             features['solar_midday_effect'] = df['solar_factor'] * \
                 (df['hour'].between(12, 14).astype(int))
 
-            # Exponential solar effect during peak solar hours
-            features['solar_exponential'] = np.exp(
-                df['solar_factor'] * df['is_offpeak'] * -2)
+            # NEW: Non-linear solar terms for extreme price depression
+            features['solar_factor_squared_offpeak'] = df.get(
+                'solar_factor_squared_offpeak', 0)
+            features['solar_factor_cubed_offpeak'] = df.get(
+                'solar_factor_cubed_offpeak', 0)
+            features['solar_hour_squared_offpeak'] = df.get(
+                'solar_hour_squared_offpeak', 0)
+            features['solar_exponential_offpeak'] = df.get(
+                'solar_exponential_offpeak', 0)
 
-        # Temperature interactions
+            # Solar change indicators
+            features['solar_factor_change_1h'] = df.get(
+                'solar_factor_change_1h', 0)
+            features['solar_rapid_increase'] = df.get(
+                'solar_rapid_increase', 0)
+
+            # Multiple levels of oversupply
+            features['solar_oversupply_high'] = df.get(
+                'solar_oversupply_high', 0)
+            features['solar_oversupply_extreme'] = df.get(
+                'solar_oversupply_extreme', 0)
+
+            # Enhanced collapse features
+            features['extreme_solar_collapse'] = df.get(
+                'extreme_solar_collapse', 0)
+
+            # Exponential solar effect during peak solar hours (enhanced)
+            features['solar_exponential'] = np.exp(
+                df['solar_factor'] * df['is_offpeak'] * -3)
+
+        # ENHANCED TEMPERATURE-SOLAR INTERACTIONS
         if 'temperature' in df.columns:
             features['temperature'] = df['temperature']
             features['temp_squared'] = df['temperature'] ** 2
             features['temp_hour_interaction'] = df['temperature'] * df['hour']
 
-        # Cloud cover effects
+            # NEW: Solar-temperature mild weather interaction
+            features['solar_temp_mild_interaction'] = df.get(
+                'solar_temp_mild_interaction', 0)
+
+        # Cloud cover effects with solar interactions
         if 'cloud_cover' in df.columns:
             features['cloud_cover'] = df['cloud_cover']
             features['clear_sky_indicator'] = (
                 df['cloud_cover'] < 20).astype(int)
             features['cloudy_indicator'] = (df['cloud_cover'] > 70).astype(int)
 
-        # Enhanced demand proxy
-        features['demand_proxy'] = df['demand_proxy']
-        features['demand_solar_interaction'] = df['demand_proxy'] * \
-            features.get('solar_factor', 0)
+            # NEW: Clear sky + high solar interaction
+            if 'solar_factor' in df.columns:
+                features['clear_sky_solar_interaction'] = (
+                    features['clear_sky_indicator'] * df['solar_factor'] * df['is_offpeak'])
 
-        # Price-based features if available
+        # Enhanced demand proxy with solar interactions
+        features['demand_proxy'] = df['demand_proxy']
+        if 'solar_factor' in df.columns:
+            features['demand_solar_interaction'] = df['demand_proxy'] * \
+                df['solar_factor']
+            features['demand_solar_offpeak_interaction'] = (
+                df['demand_proxy'] * df['solar_factor'] * df['is_offpeak'])
+
+        # PRICE-TARGETED FEATURES - Phase 1.2 Implementation
+
+        # Enhanced off-peak price statistics
+        features['offpeak_min_6h'] = df.get('offpeak_min_6h', 2.0)
+        features['offpeak_median_24h'] = df.get('offpeak_median_24h', 8.0)
+
+        # Traditional price-based features
         if 'price_lag1' in df.columns:
             price_lag1_clean = df['price_lag1'].fillna(df['price_lag1'].mean())
             features['price_lag1'] = price_lag1_clean
@@ -918,52 +1143,117 @@ class ProphetForecastService:
         # Recent weighting
         features['recent_weight'] = df['recent_weight']
 
-        # Day of week effects
+        # Day of week effects with solar interactions
         features['day_of_week'] = df['day_of_week']
         features['is_workday'] = df['is_workday']
 
-        # Month seasonality
+        # Weekend + high solar interaction
+        if 'solar_factor' in df.columns:
+            features['weekend_solar_interaction'] = df['is_weekend'] * \
+                df['solar_factor']
+
+        # Month seasonality with enhanced solar seasonal effects
         features['month'] = df['month']
         features['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
         features['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+
+        # Summer + high solar interaction
+        if 'solar_factor' in df.columns:
+            summer_indicator = df['month'].between(6, 8).astype(int)
+            features['summer_solar_interaction'] = summer_indicator * \
+                df['solar_factor']
+
+        # EXTREME CONDITION INDICATORS - Phase 1.3 Implementation
+
+        # Perfect storm conditions (high solar + off-peak + mild weather + weekend)
+        if 'solar_factor' in df.columns and 'temperature' in df.columns:
+            mild_weather = ((df['temperature'] >= 15) & (
+                df['temperature'] <= 25)).astype(int)
+            features['perfect_storm_low_price'] = (
+                df['is_offpeak'] * (df['solar_factor'] > 0.8).astype(int) *
+                mild_weather * df['is_weekend'])
+
+        # High solar + low demand proxy interaction
+        if 'solar_factor' in df.columns:
+            low_demand_indicator = (df['demand_proxy'] < -0.5).astype(int)
+            features['solar_low_demand_interaction'] = (
+                df['solar_factor'] * low_demand_indicator * df['is_offpeak'])
 
         df_features = pd.DataFrame(features)
         return self._validate_ml_features(df_features)
 
     def _train_primary_xgboost(self, X, y):
-        """Train XGBoost as primary model for limited data scenarios"""
+        """Train XGBoost as primary model with focus on extreme low-price scenarios"""
         try:
-            # Enhanced parameters for limited data
+            # Enhanced parameters for extreme solar scenarios
             xgb_params = {
                 'objective': 'reg:squarederror',
-                'n_estimators': 300,  # More trees for better learning
-                'max_depth': 8,       # Deeper trees for complex interactions
-                'learning_rate': 0.05,  # Slower learning for stability
+                'n_estimators': 400,  # More trees for better complex pattern learning
+                'max_depth': 10,      # Deeper trees for complex solar interactions
+                'learning_rate': 0.03,  # Slower learning for better extreme case capture
                 'subsample': 0.9,
                 'colsample_bytree': 0.9,
-                'reg_alpha': 0.1,     # L1 regularization
-                'reg_lambda': 0.1,    # L2 regularization
+                'reg_alpha': 0.05,    # Reduced L1 regularization for more flexibility
+                'reg_lambda': 0.05,   # Reduced L2 regularization for more flexibility
+                'gamma': 0.1,         # Minimum split loss for pruning
                 'random_state': 42,
                 'tree_method': 'auto'
             }
 
-            model = xgb.XGBRegressor(**xgb_params)
-            model.fit(X, y)
+            # Phase 2.2: Focus on low-price regions with sample weighting
+            sample_weights = np.ones(len(y))
 
-            # Feature importance analysis
+            # Give much higher weight to extreme low prices (< 3.0 cents/kWh)
+            extreme_low_mask = y < 3.0
+            sample_weights[extreme_low_mask] *= 5.0
+
+            # Give higher weight to low prices (< 6.0 cents/kWh)
+            low_price_mask = (y >= 3.0) & (y < 6.0)
+            sample_weights[low_price_mask] *= 3.0
+
+            # Give moderate weight to off-peak hours
+            if 'is_offpeak' in X.columns:
+                offpeak_mask = X['is_offpeak'] == 1
+                sample_weights[offpeak_mask] *= 2.0
+
+            print(
+                f"🎯 Training XGBoost with sample weighting: {np.sum(extreme_low_mask)} extreme low samples weighted 5x")
+
+            model = xgb.XGBRegressor(**xgb_params)
+            model.fit(X, y, sample_weight=sample_weights)
+
+            # Feature importance analysis with solar focus
             feature_importance = dict(
                 zip(X.columns, model.feature_importances_))
+
+            # Highlight solar-related features
+            solar_features = {
+                k: v for k, v in feature_importance.items() if 'solar' in k.lower()}
             top_features = sorted(feature_importance.items(),
-                                  key=lambda x: x[1], reverse=True)[:5]
+                                  key=lambda x: x[1], reverse=True)[:8]
+            top_solar_features = sorted(
+                solar_features.items(), key=lambda x: x[1], reverse=True)[:5]
+
             print(
                 f"🔝 Top features: {[f'{name}: {imp:.3f}' for name, imp in top_features]}")
+            print(
+                f"☀️ Top solar features: {[f'{name}: {imp:.3f}' for name, imp in top_solar_features]}")
 
             return {
                 'model': model,
                 'feature_columns': X.columns.tolist(),
                 'feature_importance': feature_importance,
-                'model_type': 'xgboost'
+                'model_type': 'xgboost',
+                'sample_weighting': {
+                    'extreme_low_samples': int(np.sum(extreme_low_mask)),
+                    'low_price_samples': int(np.sum(low_price_mask)),
+                    'total_samples': len(y)
+                }
             }
+
+        except Exception as e:
+            print(f"⚠️ XGBoost training failed: {str(e)}")
+            return None
 
         except Exception as e:
             print(f"⚠️ XGBoost training failed: {str(e)}")
@@ -1231,20 +1521,20 @@ class ProphetForecastService:
         return future_prophet.to_dict(orient='records')
 
     def _add_prophet_regressors(self, model, df):
-        """Add all Prophet regressors (centralized method to avoid duplication)"""
-        # Time regressors
+        """Add all Prophet regressors with AGGRESSIVE prior scales for solar impact"""
+        # Time regressors with enhanced off-peak emphasis
         time_regressors = ['hour', 'is_weekend',
                            'is_peak', 'is_offpeak', 'month', 'is_workday']
         for reg in time_regressors:
-            prior_scale = 50.0 if reg == 'is_offpeak' else 10.0
+            prior_scale = 75.0 if reg == 'is_offpeak' else 10.0  # Increased off-peak influence
             model.add_regressor(reg, prior_scale=prior_scale)
 
-        # Off-peak specific regressors
+        # Off-peak specific regressors with MUCH higher prior scales
         offpeak_regressors = ['solar_peak_hours',
                               'is_midday_solar', 'summer_extreme_solar']
         for reg in offpeak_regressors:
             if reg in df.columns:
-                prior_scale = 50.0 if reg == 'summer_extreme_solar' else 20.0
+                prior_scale = 100.0 if reg == 'summer_extreme_solar' else 40.0  # Doubled influence
                 model.add_regressor(reg, prior_scale=prior_scale)
 
         # Price-based regressors (minimal influence)
@@ -1253,26 +1543,63 @@ class ProphetForecastService:
                 model.add_regressor(reg, prior_scale=0.1)
 
         if 'offpeak_ma3' in df.columns:
-            model.add_regressor('offpeak_ma3', prior_scale=0.2)
+            # Slightly increased
+            model.add_regressor('offpeak_ma3', prior_scale=0.5)
 
-        # Weather regressors
+        # NEW: Enhanced off-peak price statistics with moderate influence
+        if 'offpeak_min_6h' in df.columns:
+            model.add_regressor('offpeak_min_6h', prior_scale=5.0)
+        if 'offpeak_median_24h' in df.columns:
+            model.add_regressor('offpeak_median_24h', prior_scale=3.0)
+
+        # Weather regressors with enhanced solar emphasis
         weather_regressors = ['cloud_cover', 'temperature', 'solar_factor',
                               'solar_production_factor', 'temp_demand_factor', 'weather_price_impact']
         for reg in weather_regressors:
             if reg in df.columns:
-                prior_scale = 8.0 if 'solar' in reg or 'impact' in reg else 3.0
+                # Nearly doubled solar influence
+                prior_scale = 15.0 if 'solar' in reg or 'impact' in reg else 3.0
                 model.add_regressor(reg, prior_scale=prior_scale)
 
-        # Critical solar collapse regressors
-        if 'midday_solar_collapse' in df.columns:
-            model.add_regressor('midday_solar_collapse', prior_scale=25.0)
-        if 'solar_oversupply' in df.columns:
-            model.add_regressor('solar_oversupply', prior_scale=15.0)
+        # NEW: Aggressive non-linear solar interaction regressors
+        solar_interaction_regressors = [
+            'solar_factor_squared_offpeak', 'solar_factor_cubed_offpeak',
+            'solar_hour_squared_offpeak', 'solar_exponential_offpeak',
+            'solar_rapid_increase', 'solar_temp_mild_interaction'
+        ]
+        for reg in solar_interaction_regressors:
+            if reg in df.columns:
+                # Very high influence for non-linear terms
+                model.add_regressor(reg, prior_scale=60.0)
 
-        # Off-peak weather regressors
+        # NEW: Enhanced solar oversupply levels with extreme influence
+        if 'solar_oversupply_high' in df.columns:
+            model.add_regressor('solar_oversupply_high', prior_scale=80.0)
+        if 'solar_oversupply_extreme' in df.columns:
+            model.add_regressor('solar_oversupply_extreme',
+                                prior_scale=120.0)  # Maximum influence
+
+        # Critical solar collapse regressors with EXTREME prior scales
+        if 'midday_solar_collapse' in df.columns:
+            model.add_regressor('midday_solar_collapse',
+                                prior_scale=100.0)  # Quadrupled influence
+        if 'extreme_solar_collapse' in df.columns:
+            # Maximum collapse influence
+            model.add_regressor('extreme_solar_collapse', prior_scale=150.0)
+        if 'solar_oversupply' in df.columns:
+            # Quadrupled influence
+            model.add_regressor('solar_oversupply', prior_scale=60.0)
+
+        # Off-peak weather regressors with much higher scales
         for reg in ['offpeak_solar_impact', 'offpeak_weather_vol']:
             if reg in df.columns:
-                model.add_regressor(reg, prior_scale=20.0)
+                # Quadrupled solar impact influence
+                prior_scale = 80.0 if 'solar' in reg else 20.0
+                model.add_regressor(reg, prior_scale=prior_scale)
+
+        # Solar change indicators with high influence
+        if 'solar_factor_change_1h' in df.columns:
+            model.add_regressor('solar_factor_change_1h', prior_scale=40.0)
 
         # Volatility and other regressors
         if 'price_volatility' in df.columns:
@@ -1282,16 +1609,19 @@ class ProphetForecastService:
         if 'recent_weight' in df.columns:
             model.add_regressor('recent_weight', prior_scale=0.8)
 
-        # Enhanced seasonalities
-        model.add_seasonality(name='hourly', period=24, fourier_order=12)
-        model.add_seasonality(name='daily_weather', period=24, fourier_order=5)
+        # Enhanced seasonalities with higher fourier orders for better solar pattern capture
+        model.add_seasonality(name='hourly', period=24,
+                              fourier_order=15)  # Increased from 12
+        model.add_seasonality(name='daily_weather', period=24,
+                              fourier_order=8)  # Increased from 5
 
         if 'solar_seasonality_condition' in df.columns:
             model.add_seasonality(name='offpeak_solar', period=24,
-                                  fourier_order=6, condition_name='solar_seasonality_condition')
+                                  fourier_order=10, condition_name='solar_seasonality_condition')  # Increased from 6
 
+        # Enhanced midday seasonality with very high prior scale for sharp solar effects
         model.add_seasonality(name='midday_sharp', period=24,
-                              fourier_order=8, prior_scale=15.0)
+                              fourier_order=12, prior_scale=30.0)  # Doubled prior scale
 
     @cache_forecast(ttl_seconds=3600)
     def forecast(self, hours_ahead: int = 48) -> list:
@@ -1451,19 +1781,37 @@ class ProphetForecastService:
             if col in df.columns:
                 future.loc[:training_length-1, col] = df[col].values
 
-        # Calculate enhanced weather features for all periods
+        # Calculate enhanced weather features for all periods (includes all new solar features)
         future = self._enhance_weather_features(future)
 
         # Add summer solar feature AFTER weather features are calculated
         future['summer_extreme_solar'] = ((future['month'].between(6, 8)) & (
             future['hour'].between(11, 15)) & (future['solar_factor'] > 0.7)).astype(int)
 
-        # Add sharp solar collapse features for future predictions
-        future['midday_solar_collapse'] = np.where((future['hour'].between(13, 15)) & (future['solar_factor'] > 0.6),
-                                                   future['solar_factor'] * -25.0, 0).round(2)
+        # Ensure the enhanced solar collapse features are available
+        # (These are already created in _enhance_weather_features, but ensure consistency)
+        if 'midday_solar_collapse' not in future.columns:
+            future['midday_solar_collapse'] = np.where(
+                (future['hour'].between(13, 15)) & (
+                    future['solar_factor'] > 0.6),
+                future['solar_factor'] ** 1.5 * -40.0, 0).round(2)
 
-        future['solar_oversupply'] = np.where(
-            (future['solar_factor'] > 0.8) & (future['hour'].between(12, 15)), 1, 0)
+        if 'extreme_solar_collapse' not in future.columns:
+            future['extreme_solar_collapse'] = np.where(
+                (future['hour'].between(12, 14)) & (
+                    future['solar_factor'] > 0.85),
+                future['solar_factor'] ** 2 * -60.0, 0).round(2)
+
+        if 'solar_oversupply' not in future.columns:
+            future['solar_oversupply'] = np.where(
+                (future['solar_factor'] > 0.8) & (future['hour'].between(12, 15)), 1, 0)
+
+        # Ensure enhanced off-peak price features for future predictions
+        if 'offpeak_min_6h' not in future.columns:
+            future['offpeak_min_6h'] = 2.0  # Conservative estimate for future
+        if 'offpeak_median_24h' not in future.columns:
+            # Conservative estimate for future
+            future['offpeak_median_24h'] = 8.0
 
         return future
 
@@ -1567,7 +1915,7 @@ class ProphetForecastService:
             return 'standard'
 
     def get_offpeak_accuracy_analysis(self, days_back: int = 7):
-        """Simple off-peak analysis for recent period"""
+        """Enhanced off-peak analysis with bias detection for solar scenarios"""
         try:
             df = self._prepare_data(self.repository.get_all_data())
             if df.empty:
@@ -1605,6 +1953,10 @@ class ProphetForecastService:
 
             # Count extreme low prices
             extreme_low_count = len(offpeak_data[offpeak_data['y'] < 3.0])
+            very_low_count = len(offpeak_data[offpeak_data['y'] < 1.0])
+
+            # Phase 3.1: Enhanced bias analysis for solar scenarios
+            bias_analysis = self._analyze_prediction_bias(recent_df)
 
             return {
                 'analysis_period': f"Last {days_back} days",
@@ -1614,12 +1966,156 @@ class ProphetForecastService:
                 'offpeak_price_std': round(offpeak_std, 2),
                 'offpeak_volatility': round(offpeak_volatility, 2),
                 'extreme_low_prices_count': extreme_low_count,
+                'very_low_prices_count': very_low_count,
                 'extreme_low_percentage': round(extreme_low_count / len(offpeak_data) * 100, 1),
                 'solar_price_correlation': round(solar_correlation, 3),
-                'recommendation': self._get_offpeak_recommendation(offpeak_volatility, solar_correlation, extreme_low_count)
+                'bias_analysis': bias_analysis,
+                'recommendation': self._get_enhanced_offpeak_recommendation(
+                    offpeak_volatility, solar_correlation, extreme_low_count, bias_analysis)
             }
         except Exception as e:
             return {"error": f"Analysis failed: {str(e)}"}
+
+    def _analyze_prediction_bias(self, df):
+        """Analyze prediction bias across different time segments and solar conditions"""
+        if len(df) < 24:
+            return {"error": "Insufficient data for bias analysis"}
+
+        try:
+            # Generate recent predictions for comparison
+            recent_forecast = self.forecast(hours_ahead=min(48, len(df)))
+
+            if not recent_forecast:
+                return {"error": "Could not generate predictions for bias analysis"}
+
+            # Convert to DataFrame for analysis
+            forecast_df = pd.DataFrame(recent_forecast)
+            forecast_df['timestamp'] = pd.to_datetime(forecast_df['timestamp'])
+
+            # Merge with actual data
+            df_analysis = df.copy()
+            df_analysis = df_analysis.merge(
+                forecast_df[['timestamp', 'predicted_price_cents_kwh']],
+                left_on='ds', right_on='timestamp', how='inner'
+            )
+
+            if len(df_analysis) < 10:
+                return {"error": "Insufficient overlap for bias analysis"}
+
+            # Calculate bias (predicted - actual)
+            df_analysis['bias'] = df_analysis['predicted_price_cents_kwh'] - \
+                df_analysis['y']
+
+            bias_results = {}
+
+            # Overall bias
+            bias_results['overall'] = {
+                'mean_bias': round(df_analysis['bias'].mean(), 3),
+                'abs_bias': round(df_analysis['bias'].abs().mean(), 3),
+                'samples': len(df_analysis)
+            }
+
+            # Off-peak bias (critical for solar scenarios)
+            offpeak_mask = df_analysis['hour'].between(10, 15)
+            if offpeak_mask.any():
+                offpeak_bias = df_analysis[offpeak_mask]['bias']
+                bias_results['offpeak'] = {
+                    'mean_bias': round(offpeak_bias.mean(), 3),
+                    'abs_bias': round(offpeak_bias.abs().mean(), 3),
+                    'samples': len(offpeak_bias),
+                    'overestimation_rate': round((offpeak_bias > 2.0).sum() / len(offpeak_bias) * 100, 1)
+                }
+
+            # High solar bias (if solar data available)
+            if 'solar_factor' in df_analysis.columns:
+                high_solar_mask = df_analysis['solar_factor'] > 0.7
+                if high_solar_mask.any():
+                    high_solar_bias = df_analysis[high_solar_mask]['bias']
+                    bias_results['high_solar'] = {
+                        'mean_bias': round(high_solar_bias.mean(), 3),
+                        'abs_bias': round(high_solar_bias.abs().mean(), 3),
+                        'samples': len(high_solar_bias),
+                        'overestimation_rate': round((high_solar_bias > 3.0).sum() / len(high_solar_bias) * 100, 1)
+                    }
+
+            # Extreme low price bias
+            extreme_low_mask = df_analysis['y'] < 3.0
+            if extreme_low_mask.any():
+                extreme_low_bias = df_analysis[extreme_low_mask]['bias']
+                bias_results['extreme_low_prices'] = {
+                    'mean_bias': round(extreme_low_bias.mean(), 3),
+                    'abs_bias': round(extreme_low_bias.abs().mean(), 3),
+                    'samples': len(extreme_low_bias),
+                    'overestimation_rate': round((extreme_low_bias > 1.0).sum() / len(extreme_low_bias) * 100, 1)
+                }
+
+            return bias_results
+
+        except Exception as e:
+            return {"error": f"Bias analysis failed: {str(e)}"}
+
+    def _get_enhanced_offpeak_recommendation(self, volatility, solar_corr, extreme_low_count, bias_analysis):
+        """Enhanced recommendations based on off-peak analysis and bias detection"""
+        recommendations = []
+
+        # Traditional volatility and correlation checks
+        if volatility > 8:
+            recommendations.append(
+                "High off-peak volatility detected - consider shorter forecast horizons")
+
+        if abs(solar_corr) > 0.3:
+            recommendations.append(
+                f"Strong solar correlation ({solar_corr:.2f}) - weather forecasts critical")
+        elif abs(solar_corr) < 0.1:
+            recommendations.append(
+                "Weak solar correlation - check weather proxy accuracy")
+
+        if extreme_low_count > 0:
+            recommendations.append(
+                f"Detected {extreme_low_count} extreme low prices - enhanced solar model active")
+
+        # New bias-based recommendations
+        if isinstance(bias_analysis, dict) and 'offpeak' in bias_analysis:
+            offpeak_bias = bias_analysis['offpeak']['mean_bias']
+            overest_rate = bias_analysis['offpeak'].get(
+                'overestimation_rate', 0)
+
+            if offpeak_bias > 3.0:
+                recommendations.append(
+                    f"⚠️ CRITICAL: Severe off-peak overestimation bias ({offpeak_bias:.1f} cents/kWh)")
+                recommendations.append(
+                    "🔧 URGENT: Increase solar regressor prior scales and retrain model")
+            elif offpeak_bias > 1.5:
+                recommendations.append(
+                    f"⚠️ Moderate off-peak overestimation bias ({offpeak_bias:.1f} cents/kWh)")
+                recommendations.append(
+                    "🔧 Consider: Enhance solar interaction features and sample weighting")
+
+            if overest_rate > 50:
+                recommendations.append(
+                    f"⚠️ High overestimation rate: {overest_rate}% of off-peak predictions too high")
+
+        if isinstance(bias_analysis, dict) and 'high_solar' in bias_analysis:
+            solar_bias = bias_analysis['high_solar']['mean_bias']
+            if solar_bias > 4.0:
+                recommendations.append(
+                    f"⚠️ CRITICAL: High solar scenario overestimation ({solar_bias:.1f} cents/kWh)")
+                recommendations.append(
+                    "🔧 URGENT: Implement aggressive solar collapse features")
+
+        if isinstance(bias_analysis, dict) and 'extreme_low_prices' in bias_analysis:
+            extreme_bias = bias_analysis['extreme_low_prices']['mean_bias']
+            if extreme_bias > 2.0:
+                recommendations.append(
+                    f"⚠️ Model failing on extreme low prices (bias: {extreme_bias:.1f} cents/kWh)")
+                recommendations.append(
+                    "🔧 Implement extreme price sample weighting and non-linear solar terms")
+
+        if not recommendations:
+            recommendations.append(
+                "✅ Off-peak patterns stable - current model performing well")
+
+        return recommendations
 
     def _get_offpeak_recommendation(self, volatility, solar_corr, extreme_low_count=0):
         """Simple recommendations based on off-peak analysis"""
@@ -1675,9 +2171,8 @@ class ProphetForecastService:
         else:
             raise ValueError(f"Invalid configuration path: {section}.{key}")
 
+
 # Factory function for easy enhanced service creation
-
-
 def create_enhanced_prophet_service(repository=None, enable_all_features=True):
     """Create an enhanced Prophet service with all improvements"""
     return ProphetForecastService(repository, enable_enhancements=enable_all_features)
