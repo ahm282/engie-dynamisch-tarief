@@ -357,6 +357,10 @@ class ProphetForecastService:
         solar_factor = np.clip(((100 - df['cloud_cover']) / 100) ** 2.5, 0, 1)
         df['solar_factor'] = solar_factor.round(2)
 
+        # CRITICAL: Add solar suppression indicator for cloud cover < 30%
+        df['solar_suppression_active'] = ((df['cloud_cover'] < 30) &
+                                          (df['hour'].between(11, 16))).astype(int)
+
         return self._enhance_weather_features(df)
 
     def _enhance_weather_features(self, df):
@@ -425,12 +429,72 @@ class ProphetForecastService:
         df['solar_oversupply'] = np.where(
             (df['solar_factor'] > 0.8) & (df['hour'].between(12, 15)), 1, 0)
 
+        # CRITICAL: Solar Suppression Effect (cloud cover < 30% during hours 11-16)
+        # This is the core issue - when solar floods the grid, prices crash to 20-40% of baseline
+        if 'solar_suppression_active' in df.columns:
+            # Extreme price suppression during high solar production
+            df['solar_flood_effect'] = np.where(
+                df['solar_suppression_active'] == 1,
+                # Much more aggressive than current -60
+                (df['solar_factor'] ** 3) * -80.0,
+                0).round(2)
+
+            # Additional targeted suppression for the 11-16 hour window
+            df['midday_flood_multiplier'] = np.where(
+                (df['hour'].between(11, 16)) & (df['cloud_cover'] < 30),
+                df['solar_factor'] * -120.0,  # Extreme suppression
+                0).round(2)
+
+            # Cloud-specific suppression (lower cloud cover = more price crash)
+            df['clear_sky_suppression'] = np.where(
+                (df['hour'].between(11, 16)) & (df['cloud_cover'] < 20),
+                (1 - df['cloud_cover']/100) * df['solar_factor'] * -150.0,
+                0).round(2)
+        else:
+            # Fallback if solar_suppression_active not available
+            df['solar_flood_effect'] = 0
+            df['midday_flood_multiplier'] = 0
+            df['clear_sky_suppression'] = 0
+
         # Phase 1.2: ENHANCED TEMPERATURE-SOLAR INTERACTIONS
 
         # Temperature-based demand
         temp_demand = np.where(df['temperature'] < 15, (15 - df['temperature']) / 10,
                                np.where(df['temperature'] > 25, (df['temperature'] - 25) / 10, 0))
         df['temp_demand_factor'] = temp_demand.round(2)
+
+        # CRITICAL: Evening Demand Spikes (hot evenings + no solar = price spikes)
+        df['is_evening_peak'] = ((df['hour'].between(19, 22))).astype(int)
+        df['is_hot_evening'] = ((df['temperature'] > 25)
+                                & df['is_evening_peak']).astype(int)
+
+        # Evening spike when high demand meets no solar production (50-100% increase)
+        # Base cooling demand effect
+        cooling_demand = np.where(df['temperature'] > 25,
+                                  ((df['temperature'] - 25) / 5) ** 1.5, 0)  # Non-linear scaling
+
+        df['evening_demand_spike'] = np.where(
+            df['is_hot_evening'] == 1,
+            cooling_demand * 80.0,  # Increased from 40 to 80 for 50-100% effect
+            0).round(2)
+
+        # Extreme heat effect (temp > 30°C) during evening peak
+        df['extreme_heat_evening'] = np.where(
+            (df['temperature'] > 30) & df['is_evening_peak'],
+            ((df['temperature'] - 30) / 2) * 120.0,  # Very aggressive scaling
+            0).round(2)
+
+        # No solar available during evening peak hours - amplifies price
+        df['no_solar_evening_effect'] = np.where(
+            df['is_evening_peak'] == 1,
+            df['temp_demand_factor'] * 50.0,  # Increased from 25 to 50
+            0).round(2)
+
+        # Compound effect: hot evening + high baseline demand
+        df['compound_evening_demand'] = np.where(
+            (df['is_hot_evening'] == 1) & (df['temp_demand_factor'] > 0.5),
+            df['temp_demand_factor'] * df['evening_demand_spike'] * 0.3,
+            0).round(2)
 
         # Solar-temperature mild weather interaction (high solar + mild temp = very low prices)
         mild_temp_indicator = ((df['temperature'] >= 15) & (
@@ -474,6 +538,68 @@ class ProphetForecastService:
             df['is_offpeak'] == 1,
             base_impact + aggressive_solar_impact,
             base_impact).round(2)
+
+        # CRITICAL: Weather Pattern Matching for Historical Baselines
+        df = self._add_weather_pattern_baselines(df)
+
+        return df
+
+    def _add_weather_pattern_baselines(self, df):
+        """Add weather-conditional baselines based on historical pattern matching"""
+        if 'y' not in df.columns or len(df) < 168:  # Need at least 1 week of data
+            # Set default baselines for future predictions
+            df['weather_baseline_adjustment'] = 0
+            df['similar_day_baseline'] = df.get(
+                'y', pd.Series([10.0] * len(df)))
+            return df
+
+        weather_baseline_adjustments = []
+        similar_day_baselines = []
+
+        for idx, row in df.iterrows():
+            # Find similar weather days in historical data (at least 7 days ago to avoid overfitting)
+            historical_mask = (
+                # At least 1 week ago
+                (df['ds'] < row['ds'] - pd.Timedelta(days=7)) &
+                # ±15% cloud cover
+                (abs(df['cloud_cover'] - row['cloud_cover']) <= 15) &
+                # ±3°C temperature
+                (abs(df['temperature'] - row['temperature']) <= 3) &
+                (df['hour'] == row['hour'])  # Same hour of day
+            )
+
+            similar_days = df[historical_mask]
+
+            if len(similar_days) >= 3:  # Need at least 3 similar days
+                # Calculate weather-adjusted baseline from similar days
+                similar_prices = similar_days['y'].dropna()
+                if len(similar_prices) > 0:
+                    weather_baseline = similar_prices.median()
+
+                    # Seasonal adjustment (account for month differences)
+                    month_diff = abs(
+                        row['month'] - similar_days['month'].median())
+                    # Max 10% seasonal adjustment
+                    seasonal_factor = 1.0 - (month_diff / 12) * 0.1
+
+                    adjusted_baseline = weather_baseline * seasonal_factor
+
+                    # Calculate adjustment relative to overall hour baseline
+                    hour_baseline = df[df['hour'] == row['hour']]['y'].median()
+                    baseline_adjustment = adjusted_baseline - hour_baseline
+
+                    weather_baseline_adjustments.append(baseline_adjustment)
+                    similar_day_baselines.append(adjusted_baseline)
+                else:
+                    weather_baseline_adjustments.append(0)
+                    similar_day_baselines.append(row.get('y', 10.0))
+            else:
+                # Not enough similar days, use default
+                weather_baseline_adjustments.append(0)
+                similar_day_baselines.append(row.get('y', 10.0))
+
+        df['weather_baseline_adjustment'] = weather_baseline_adjustments
+        df['similar_day_baseline'] = similar_day_baselines
 
         return df
 
@@ -652,6 +778,36 @@ class ProphetForecastService:
         if 'solar_oversupply' in df.columns:
             features[f'{prefix}solar_oversupply'] = df['solar_oversupply']
 
+        # CRITICAL: New solar suppression features for cloud cover < 30% effect
+        if 'solar_flood_effect' in df.columns:
+            features[f'{prefix}solar_flood_effect'] = df['solar_flood_effect']
+        if 'midday_flood_multiplier' in df.columns:
+            features[f'{prefix}midday_flood_multiplier'] = df['midday_flood_multiplier']
+        if 'clear_sky_suppression' in df.columns:
+            features[f'{prefix}clear_sky_suppression'] = df['clear_sky_suppression']
+        if 'solar_suppression_active' in df.columns:
+            features[f'{prefix}solar_suppression_active'] = df['solar_suppression_active']
+
+        # CRITICAL: New evening demand spike features
+        if 'evening_demand_spike' in df.columns:
+            features[f'{prefix}evening_demand_spike'] = df['evening_demand_spike']
+        if 'no_solar_evening_effect' in df.columns:
+            features[f'{prefix}no_solar_evening_effect'] = df['no_solar_evening_effect']
+        if 'is_hot_evening' in df.columns:
+            features[f'{prefix}is_hot_evening'] = df['is_hot_evening']
+        if 'is_evening_peak' in df.columns:
+            features[f'{prefix}is_evening_peak'] = df['is_evening_peak']
+        if 'extreme_heat_evening' in df.columns:
+            features[f'{prefix}extreme_heat_evening'] = df['extreme_heat_evening']
+        if 'compound_evening_demand' in df.columns:
+            features[f'{prefix}compound_evening_demand'] = df['compound_evening_demand']
+
+        # NEW: Weather pattern matching features
+        if 'weather_baseline_adjustment' in df.columns:
+            features[f'{prefix}weather_baseline_adjustment'] = df['weather_baseline_adjustment']
+        if 'similar_day_baseline' in df.columns:
+            features[f'{prefix}similar_day_baseline'] = df['similar_day_baseline']
+
         # Advanced engineered features for price-awareness
         features[f'{prefix}demand_proxy'] = df['demand_proxy']
         features[f'{prefix}recent_weight'] = df['recent_weight']
@@ -741,6 +897,40 @@ class ProphetForecastService:
                 offpeak_overest_mask = (ml_features_clean['is_offpeak'] == 1) & (
                     residuals_clean < -3.0)
                 sample_weights[offpeak_overest_mask] *= 4.0
+
+            # CRITICAL: Extra weights for solar suppression scenarios (cloud < 30%, hours 11-16)
+            if 'solar_suppression_active' in ml_features_clean.columns:
+                solar_suppression_mask = (ml_features_clean['solar_suppression_active'] == 1) & (
+                    residuals_clean < -5.0)  # Prophet overestimated during solar flooding
+                # Very high weight
+                sample_weights[solar_suppression_mask] *= 8.0
+                print(
+                    f"🌞 Solar suppression cases weighted 8x: {np.sum(solar_suppression_mask)}")
+
+            # CRITICAL: Extra weights for evening demand spike underestimation
+            if 'is_evening_peak' in ml_features_clean.columns:
+                evening_underest_mask = (ml_features_clean['is_evening_peak'] == 1) & (
+                    residuals_clean > 3.0)  # Prophet underestimated evening spikes
+                # High weight for spikes
+                sample_weights[evening_underest_mask] *= 5.0
+                print(
+                    f"🌆 Evening spike cases weighted 5x: {np.sum(evening_underest_mask)}")
+
+            # CRITICAL: Extra weights for extreme heat evening underestimation
+            if 'extreme_heat_evening' in ml_features_clean.columns:
+                extreme_heat_mask = (ml_features_clean['extreme_heat_evening'] > 0) & (
+                    residuals_clean > 5.0)  # Severe underestimation during extreme heat
+                sample_weights[extreme_heat_mask] *= 7.0  # Very high weight
+                print(
+                    f"🔥 Extreme heat evening cases weighted 7x: {np.sum(extreme_heat_mask)}")
+
+            # Extra weight for clear sky (cloud < 20%) overestimation during midday
+            if 'clear_sky_suppression' in ml_features_clean.columns:
+                clear_sky_mask = (ml_features_clean['clear_sky_suppression'] != 0) & (
+                    residuals_clean < -8.0)  # Extreme overestimation on clear days
+                sample_weights[clear_sky_mask] *= 10.0  # Maximum weight
+                print(
+                    f"☀️ Clear sky cases weighted 10x: {np.sum(clear_sky_mask)}")
 
             print(
                 f"🎯 Residual XGBoost: {np.sum(overestimate_mask)} severe overestimation cases weighted 6x")
@@ -1034,8 +1224,14 @@ class ProphetForecastService:
             price_service.categorize_price)
         results['timestamp'] = results['timestamp'].astype(str)
 
-        print(f"✅ ML-first forecast complete: {len(results)} predictions")
-        return results.to_dict(orient='records')
+        # Convert to dict and add weather-aware categories
+        result_records = results.to_dict(orient='records')
+        result_records = self.add_weather_aware_price_categories(
+            result_records)
+
+        print(
+            f"✅ ML-first forecast complete: {len(result_records)} predictions")
+        return result_records
 
     def _create_enhanced_ml_features(self, df):
         """Create enhanced ML features with AGGRESSIVE solar interactions for extreme price prediction"""
@@ -1087,6 +1283,15 @@ class ProphetForecastService:
             features['extreme_solar_collapse'] = df.get(
                 'extreme_solar_collapse', 0)
 
+            # CRITICAL: New solar suppression features for cloud cover < 30% effect
+            features['solar_flood_effect'] = df.get('solar_flood_effect', 0)
+            features['midday_flood_multiplier'] = df.get(
+                'midday_flood_multiplier', 0)
+            features['clear_sky_suppression'] = df.get(
+                'clear_sky_suppression', 0)
+            features['solar_suppression_active'] = df.get(
+                'solar_suppression_active', 0)
+
             # Exponential solar effect during peak solar hours (enhanced)
             features['solar_exponential'] = np.exp(
                 df['solar_factor'] * df['is_offpeak'] * -3)
@@ -1100,6 +1305,23 @@ class ProphetForecastService:
             # NEW: Solar-temperature mild weather interaction
             features['solar_temp_mild_interaction'] = df.get(
                 'solar_temp_mild_interaction', 0)
+
+            # CRITICAL: Evening demand spike features for hot evenings + no solar
+            features['is_evening_peak'] = df.get('is_evening_peak', 0)
+            features['is_hot_evening'] = df.get('is_hot_evening', 0)
+            features['evening_demand_spike'] = df.get(
+                'evening_demand_spike', 0)
+            features['no_solar_evening_effect'] = df.get(
+                'no_solar_evening_effect', 0)
+            features['extreme_heat_evening'] = df.get(
+                'extreme_heat_evening', 0)
+            features['compound_evening_demand'] = df.get(
+                'compound_evening_demand', 0)
+
+        # NEW: Weather pattern matching features
+        features['weather_baseline_adjustment'] = df.get(
+            'weather_baseline_adjustment', 0)
+        features['similar_day_baseline'] = df.get('similar_day_baseline', 10.0)
 
         # Cloud cover effects with solar interactions
         if 'cloud_cover' in df.columns:
@@ -1517,8 +1739,188 @@ class ProphetForecastService:
             price_service.categorize_price)
         future_prophet['timestamp'] = future_prophet['timestamp'].astype(str)
 
+        # Convert to dict and add weather-aware categories
+        result_records = future_prophet.to_dict(orient='records')
+        result_records = self.add_weather_aware_price_categories(
+            result_records)
+
         print("✅ Enhanced ensemble forecast complete")
-        return future_prophet.to_dict(orient='records')
+        return result_records
+
+    def get_weather_aware_price_category(self, price: float, hour: int, cloud_cover: float, temperature: float) -> str:
+        """Get weather-aware price category instead of static thresholds"""
+
+        # Define base thresholds
+        base_cheap = 8.0
+        base_moderate = 12.0
+        base_expensive = 18.0
+
+        # Solar suppression adjustment (cloud cover < 30%, hours 11-16)
+        if 11 <= hour <= 16 and cloud_cover < 30:
+            solar_factor = (100 - cloud_cover) / 100
+            solar_adjustment = solar_factor * 0.6  # Up to 60% threshold reduction
+
+            cheap_threshold = base_cheap * (1 - solar_adjustment)
+            moderate_threshold = base_moderate * (1 - solar_adjustment * 0.4)
+            expensive_threshold = base_expensive * (1 - solar_adjustment * 0.2)
+
+        # Evening demand spike adjustment (temp > 25°C, hours 19-22)
+        elif 19 <= hour <= 22 and temperature > 25:
+            # Cap at 10°C above 25°C
+            heat_factor = min((temperature - 25) / 10, 1.0)
+            heat_adjustment = heat_factor * 0.4  # Up to 40% threshold increase
+
+            cheap_threshold = base_cheap * (1 + heat_adjustment * 0.5)
+            moderate_threshold = base_moderate * (1 + heat_adjustment)
+            expensive_threshold = base_expensive * (1 + heat_adjustment * 1.5)
+
+        # Standard thresholds for other conditions
+        else:
+            cheap_threshold = base_cheap
+            moderate_threshold = base_moderate
+            expensive_threshold = base_expensive
+
+        # Categorize with dynamic thresholds
+        if price <= cheap_threshold:
+            return "cheap"
+        elif price <= moderate_threshold:
+            return "moderate"
+        elif price <= expensive_threshold:
+            return "expensive"
+        else:
+            return "very_expensive"
+
+    def add_weather_aware_price_categories(self, results: list) -> list:
+        """Add weather-aware price categories to forecast results"""
+
+        for result in results:
+            price = result.get('predicted_price_cents_kwh', 0)
+            hour = result.get('hour', 12)
+
+            # Get weather data from result or use defaults
+            temperature = result.get('temperature_celsius', 20)
+
+            # Estimate cloud cover based on time and season (if not available)
+            # This is a fallback - ideally should come from weather forecast
+            if 'cloud_cover' not in result:
+                # Simple seasonal model: less clouds in summer, more in winter
+                # More clouds in morning/evening, less at midday
+                month = pd.Timestamp(result.get(
+                    'timestamp', '2025-07-30')).month
+                seasonal_clouds = 60 + 20 * \
+                    np.sin(2 * np.pi * (month - 6) / 12)
+                daily_variation = -10 * np.sin(2 * np.pi * (hour - 6) / 12)
+                cloud_cover = max(
+                    0, min(100, seasonal_clouds + daily_variation))
+            else:
+                cloud_cover = result['cloud_cover']
+
+            # Get weather-aware category
+            weather_category = self.get_weather_aware_price_category(
+                price, hour, cloud_cover, temperature)
+
+            # Add both standard and weather-aware categories for comparison
+            result['weather_aware_category'] = weather_category
+
+            # Also add context information
+            result['category_context'] = {
+                'cloud_cover': cloud_cover,
+                'is_solar_suppression_period': (11 <= hour <= 16 and cloud_cover < 30),
+                'is_evening_spike_period': (19 <= hour <= 22 and temperature > 25),
+                'weather_threshold_adjustment': 'solar_suppression' if (11 <= hour <= 16 and cloud_cover < 30)
+                else 'evening_spike' if (19 <= hour <= 22 and temperature > 25)
+                else 'standard'
+            }
+
+        return results
+
+    def analyze_weather_price_patterns(self, days_back: int = 30) -> Dict[str, Any]:
+        """Analyze historical weather-price correlations for model validation"""
+        try:
+            df = self._prepare_data(self.repository.get_all_data())
+            if df.empty or len(df) < 168:  # Need at least 1 week
+                return {"error": "Insufficient historical data"}
+
+            # Filter to recent data
+            cutoff_date = df['ds'].max() - pd.Timedelta(days=days_back)
+            recent_df = df[df['ds'] >= cutoff_date].copy()
+
+            if len(recent_df) < 24:
+                return {"error": "Insufficient recent data"}
+
+            analysis = {
+                "analysis_period": {
+                    "start_date": recent_df['ds'].min().strftime('%Y-%m-%d'),
+                    "end_date": recent_df['ds'].max().strftime('%Y-%m-%d'),
+                    "total_hours": len(recent_df)
+                }
+            }
+
+            # 1. Solar Suppression Analysis (cloud cover < 30%, hours 11-16)
+            solar_suppression_mask = (
+                (recent_df['hour'].between(11, 16)) &
+                (recent_df['cloud_cover'] < 30)
+            )
+            solar_suppression_data = recent_df[solar_suppression_mask]
+
+            if len(solar_suppression_data) > 0:
+                baseline_midday = recent_df[recent_df['hour'].between(
+                    11, 16)]['y'].median()
+                suppression_median = solar_suppression_data['y'].median()
+                suppression_effect = (
+                    suppression_median / baseline_midday - 1) * 100
+
+                analysis["solar_suppression"] = {
+                    "periods_identified": len(solar_suppression_data),
+                    "baseline_midday_price": baseline_midday,
+                    "suppression_median_price": suppression_median,
+                    "price_reduction_percent": suppression_effect,
+                    "cheap_category_rate": (solar_suppression_data['y'] <= 8.0).mean() * 100,
+                    "avg_cloud_cover": solar_suppression_data['cloud_cover'].mean(),
+                    "avg_solar_factor": solar_suppression_data['solar_factor'].mean()
+                }
+
+            # 2. Evening Demand Spike Analysis (temp > 25°C, hours 19-22)
+            evening_spike_mask = (
+                (recent_df['hour'].between(19, 22)) &
+                (recent_df['temperature'] > 25)
+            )
+            evening_spike_data = recent_df[evening_spike_mask]
+
+            if len(evening_spike_data) > 0:
+                baseline_evening = recent_df[recent_df['hour'].between(
+                    19, 22)]['y'].median()
+                spike_median = evening_spike_data['y'].median()
+                spike_effect = (spike_median / baseline_evening - 1) * 100
+
+                analysis["evening_spikes"] = {
+                    "periods_identified": len(evening_spike_data),
+                    "baseline_evening_price": baseline_evening,
+                    "spike_median_price": spike_median,
+                    "price_increase_percent": spike_effect,
+                    "expensive_category_rate": (evening_spike_data['y'] >= 18.0).mean() * 100,
+                    "avg_temperature": evening_spike_data['temperature'].mean(),
+                    "max_temperature": evening_spike_data['temperature'].max()
+                }
+
+            # 3. Weather Pattern Correlations
+            correlations = {}
+            for weather_var in ['cloud_cover', 'temperature', 'solar_factor']:
+                if weather_var in recent_df.columns:
+                    correlation = recent_df[weather_var].corr(recent_df['y'])
+                    correlations[weather_var] = correlation
+
+            analysis["weather_correlations"] = correlations
+
+            analysis["recommendations"] = []
+            if "solar_suppression" in analysis and analysis["solar_suppression"]["price_reduction_percent"] < -20:
+                analysis["recommendations"].append(
+                    "Strong solar suppression detected - increase solar regressor weights")
+
+            return analysis
+
+        except Exception as e:
+            return {"error": f"Analysis failed: {str(e)}"}
 
     def _add_prophet_regressors(self, model, df):
         """Add all Prophet regressors with AGGRESSIVE prior scales for solar impact"""
@@ -1589,6 +1991,49 @@ class ProphetForecastService:
         if 'solar_oversupply' in df.columns:
             # Quadrupled influence
             model.add_regressor('solar_oversupply', prior_scale=60.0)
+
+        # NEW CRITICAL: Solar Suppression Features (cloud cover < 30% effect)
+        if 'solar_flood_effect' in df.columns:
+            model.add_regressor('solar_flood_effect',
+                                prior_scale=200.0)  # Highest priority
+        if 'midday_flood_multiplier' in df.columns:
+            model.add_regressor('midday_flood_multiplier',
+                                prior_scale=180.0)  # Very high
+        if 'clear_sky_suppression' in df.columns:
+            model.add_regressor('clear_sky_suppression',
+                                prior_scale=220.0)  # Maximum suppression
+        if 'solar_suppression_active' in df.columns:
+            model.add_regressor('solar_suppression_active',
+                                prior_scale=160.0)  # Strong indicator
+
+        # NEW CRITICAL: Evening Demand Spike Features
+        if 'evening_demand_spike' in df.columns:
+            model.add_regressor('evening_demand_spike',
+                                prior_scale=120.0)  # Strong evening spike
+        if 'no_solar_evening_effect' in df.columns:
+            model.add_regressor('no_solar_evening_effect',
+                                prior_scale=100.0)  # High evening demand
+        if 'is_hot_evening' in df.columns:
+            # Hot evening indicator
+            model.add_regressor('is_hot_evening', prior_scale=80.0)
+        if 'is_evening_peak' in df.columns:
+            # Evening peak indicator
+            model.add_regressor('is_evening_peak', prior_scale=60.0)
+        if 'extreme_heat_evening' in df.columns:
+            # Extreme heat evenings
+            model.add_regressor('extreme_heat_evening', prior_scale=140.0)
+        if 'compound_evening_demand' in df.columns:
+            # Compound evening effects
+            model.add_regressor('compound_evening_demand', prior_scale=90.0)
+
+        # NEW: Weather Pattern Matching Features
+        if 'weather_baseline_adjustment' in df.columns:
+            # Historical pattern adjustment
+            model.add_regressor(
+                'weather_baseline_adjustment', prior_scale=50.0)
+        if 'similar_day_baseline' in df.columns:
+            model.add_regressor('similar_day_baseline',
+                                prior_scale=30.0)  # Similar day baseline
 
         # Off-peak weather regressors with much higher scales
         for reg in ['offpeak_solar_impact', 'offpeak_weather_vol']:
@@ -1805,6 +2250,62 @@ class ProphetForecastService:
         if 'solar_oversupply' not in future.columns:
             future['solar_oversupply'] = np.where(
                 (future['solar_factor'] > 0.8) & (future['hour'].between(12, 15)), 1, 0)
+
+        # Ensure critical new solar suppression features are available
+        if 'solar_suppression_active' not in future.columns:
+            future['solar_suppression_active'] = ((future['cloud_cover'] < 30) &
+                                                  (future['hour'].between(11, 16))).astype(int)
+        if 'solar_flood_effect' not in future.columns:
+            future['solar_flood_effect'] = np.where(
+                future['solar_suppression_active'] == 1,
+                (future['solar_factor'] ** 3) * -80.0, 0).round(2)
+        if 'midday_flood_multiplier' not in future.columns:
+            future['midday_flood_multiplier'] = np.where(
+                (future['hour'].between(11, 16)) & (
+                    future['cloud_cover'] < 30),
+                future['solar_factor'] * -120.0, 0).round(2)
+        if 'clear_sky_suppression' not in future.columns:
+            future['clear_sky_suppression'] = np.where(
+                (future['hour'].between(11, 16)) & (
+                    future['cloud_cover'] < 20),
+                (1 - future['cloud_cover']/100) * future['solar_factor'] * -150.0, 0).round(2)
+
+        # Ensure critical evening demand spike features are available
+        if 'is_evening_peak' not in future.columns:
+            future['is_evening_peak'] = future['hour'].between(
+                19, 22).astype(int)
+        if 'is_hot_evening' not in future.columns:
+            future['is_hot_evening'] = ((future['temperature'] > 25) &
+                                        future['is_evening_peak']).astype(int)
+        if 'evening_demand_spike' not in future.columns:
+            cooling_demand = np.where(future['temperature'] > 25,
+                                      ((future['temperature'] - 25) / 5) ** 1.5, 0)
+            future['evening_demand_spike'] = np.where(
+                future['is_hot_evening'] == 1,
+                cooling_demand * 80.0, 0).round(2)
+        if 'extreme_heat_evening' not in future.columns:
+            future['extreme_heat_evening'] = np.where(
+                (future['temperature'] > 30) & future['is_evening_peak'],
+                ((future['temperature'] - 30) / 2) * 120.0, 0).round(2)
+        if 'no_solar_evening_effect' not in future.columns:
+            temp_demand = np.where(future['temperature'] < 15, (15 - future['temperature']) / 10,
+                                   np.where(future['temperature'] > 25, (future['temperature'] - 25) / 10, 0))
+            future['no_solar_evening_effect'] = np.where(
+                future['is_evening_peak'] == 1,
+                temp_demand * 50.0, 0).round(2)
+        if 'compound_evening_demand' not in future.columns:
+            temp_demand = np.where(future['temperature'] < 15, (15 - future['temperature']) / 10,
+                                   np.where(future['temperature'] > 25, (future['temperature'] - 25) / 10, 0))
+            future['compound_evening_demand'] = np.where(
+                (future['is_hot_evening'] == 1) & (temp_demand > 0.5),
+                temp_demand * future['evening_demand_spike'] * 0.3, 0).round(2)
+
+        # Ensure weather pattern matching features are available
+        if 'weather_baseline_adjustment' not in future.columns:
+            # No adjustment for future predictions
+            future['weather_baseline_adjustment'] = 0
+        if 'similar_day_baseline' not in future.columns:
+            future['similar_day_baseline'] = 10.0  # Default baseline
 
         # Ensure enhanced off-peak price features for future predictions
         if 'offpeak_min_6h' not in future.columns:
